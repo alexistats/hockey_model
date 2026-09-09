@@ -181,7 +181,13 @@ def apply_boxscore(session: Session, raw: schemas.RawBoxscore) -> None:
         (raw.player_by_game_stats.away_team, raw.away_team.abbrev),
     )
     for side, team_abbrev in sides:
-        skaters.extend((s, team_abbrev) for s in side.forwards + side.defense)
+        # The NHL boxscore occasionally lists a dressed backup goalie among the
+        # forwards or defence with 0:00 played. Letting one into
+        # skater_game_logs is not just a junk row: the player-stats pass then
+        # asks the per-player endpoint for that goalie's *skater* log, gets a
+        # goalie-shaped payload back with no powerPlayPoints, and the whole
+        # backfill stops. Filter on the position the boxscore itself reports.
+        skaters.extend((s, team_abbrev) for s in side.forwards + side.defense if s.position != "G")
         goalies.extend((g, team_abbrev) for g in side.goalies if mappers.toi_to_seconds(g.toi) > 0)
 
     everyone = [p for p, _ in skaters] + [p for p, _ in goalies]
@@ -338,10 +344,14 @@ def sync_player_stats(session: Session, client: NhlApiClient, season: int) -> in
     re-run after an interrupted backfill.
     """
     # (player_id, game_type) pairs that actually have log rows for this season.
+    # Goalie rows are excluded even though apply_boxscore should never create
+    # one: the per-player endpoint answers by the player's real position, so a
+    # single misfiled goalie returns a payload with no powerPlayPoints and
+    # halts the run.
     skater_pairs = session.execute(
         select(SkaterGameLog.player_id, NhlGame.game_type)
         .join(NhlGame, SkaterGameLog.game_id == NhlGame.nhl_game_id)
-        .where(NhlGame.season == season)
+        .where(NhlGame.season == season, SkaterGameLog.position != "G")
         .distinct()
     ).all()
     goalie_pairs = session.execute(
