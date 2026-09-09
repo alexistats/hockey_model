@@ -146,9 +146,12 @@ def main() -> None:
     scoring = load_scoring_from_yaml()
     projection = project_multi.project(idata, data)
     board = draft_board(projection, scoring)
-    board["exp_games"] = [
-        projection.games_played[:, i].mean() for i in range(len(projection.players))
-    ]
+    # draft_board sorts by mean and resets the index, so a list built in
+    # projection-player order lands against the wrong rows. Join on the id.
+    expected = pd.Series(
+        projection.games_played.mean(axis=0), index=projection.players, name="exp_games"
+    )
+    board["exp_games"] = board["player_id"].map(expected)
 
     games = SEASON_LENGTH[PROJECTION_SEASON]
     print(f"\n=== {season_label(PROJECTION_SEASON)} draft board, fantasy points ===")

@@ -23,12 +23,19 @@ latent form walk that every category loads onto, plus a category-specific walk
 for the rest. The loadings are estimated, which lets hits and blocks come out
 near zero, as the data says they should: their correlation with goals is -0.01.
 
-**Availability.** Games played is modelled as a binomial share of the season,
-with its own partially-pooled rate and its own walk, so a player who lost most
-of two seasons carries that into their floor. Without it, every player is
-assumed to dress for all 84 games and risk becomes almost exactly proportional
-to reward - which is what made the safe, balanced and upside draft rankings
-come out identical on the MVP fit.
+**Availability.** Games played is a binomial share of the season, with a
+partially-pooled durability level per player and AR(1) departures from it.
+Without it every player is assumed to dress for all 84 games and risk comes out
+almost exactly proportional to reward, which is what made the safe, balanced
+and upside rankings identical on the MVP fit.
+
+The reversion matters as much as the component. The first version used a random
+walk here, matching the scoring rates, and that is the wrong shape: durability
+has a level to return to and a walk has none, so the spread grew with the
+length of the history instead of settling. Draisaitl came out expecting 61 of
+84 games with a 5th-to-95th range of 0.19 to 0.99 of the season, against an
+actual average of 73 of 82, and his floor fell to 117 fantasy points when his
+worst full season on record is 454.
 
 The state-space architecture is unchanged from the original model: latent rates
 drift as random walks across seasons, opponent strength is AR(1), there is a
@@ -258,26 +265,37 @@ def build(data: MultiData) -> pm.Model:
         pm.Poisson("counts", mu=pt.exp(log_rate), observed=observed, dims=("obs", "stat"))
 
         # --- availability ---
-        # Games played as a share of the season, on a logit scale, with the
-        # same partial pooling and the same drift structure as the rates. A
-        # player who lost most of two seasons keeps a lower floor because of
-        # it, which is the whole point of modelling this at all.
+        # Each player has a durability level, and departures from it revert.
+        # That reversion is the whole point, and getting it wrong the first way
+        # produced nonsense: a random walk here, like the one on the scoring
+        # rates, accumulates variance every season and never pulls back, so a
+        # player whose games played bounced around - which is every player -
+        # ended up with an unbounded projection. Draisaitl came out with a 5th
+        # to 95th percentile of 0.19 to 0.99 of the season and a 61-game
+        # expectation despite averaging 73 of 82, which dragged his floor to
+        # 117 fantasy points against a career low of 454.
+        #
+        # A random walk is the right shape for a scoring rate, which genuinely
+        # drifts and has no home to return to. It is the wrong shape for
+        # durability, which does.
         mu_avail = pm.Normal("mu_avail", mu=PRIOR_LOGIT_AVAILABILITY, sigma=1.0, dims="position")
         sigma_avail = pm.HalfNormal("sigma_avail", sigma=0.7)
         z_avail = pm.Normal("z_avail", 0.0, 1.0, dims="player")
-        sigma_avail_walk = pm.HalfNormal("sigma_avail_walk", sigma=0.3)
-        z_avail_walk = pm.Normal("z_avail_walk", 0.0, 1.0, dims=("player", "walk_step"))
+        durability = mu_avail[position_idx] + sigma_avail * z_avail
+
+        # Season-to-season departures from that level: AR(1), so a bad year
+        # carries into the next one and then fades, and the uncertainty at the
+        # projection step settles at the stationary spread instead of growing
+        # with the length of the history.
+        phi_avail = pm.Beta("phi_avail", alpha=2.0, beta=2.0)
+        sigma_avail_season = pm.HalfNormal("sigma_avail_season", sigma=0.5)
+        z_avail_season = pm.Normal("z_avail_season", 0.0, 1.0, dims=("player", "walk_step"))
+        avail_decay = phi_avail**lag * causal
+        avail_dev = (
+            avail_decay[None, :, :] * (sigma_avail_season * z_avail_season)[:, None, :]
+        ).sum(axis=-1)
         logit_avail = pm.Deterministic(
-            "logit_avail",
-            mu_avail[position_idx][:, None]
-            + (sigma_avail * z_avail)[:, None]
-            + pt.cumsum(
-                pt.concatenate(
-                    [pt.zeros((n_players, 1)), sigma_avail_walk * z_avail_walk[:, 1:]], axis=1
-                ),
-                axis=1,
-            ),
-            dims=("player", "walk_step"),
+            "logit_avail", durability[:, None] + avail_dev, dims=("player", "walk_step")
         )
         # --- plus/minus ---
         # Signed, so Normal rather than Poisson, and given a per-player mean
