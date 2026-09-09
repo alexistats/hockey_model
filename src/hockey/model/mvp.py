@@ -7,7 +7,7 @@ calibration. It is the checkpoint the plan puts before the rest of the model
 work.
 
 Known limitation, stated rather than hidden: there is no availability component
-yet, so these totals assume every player dresses for all 82 games. They are
+yet, so these totals assume every player dresses for every game. They are
 therefore optimistic, and the ceiling more so than the floor. Availability is
 the next piece of work.
 
@@ -25,7 +25,7 @@ import pandas as pd
 from hockey.db import SessionLocal
 from hockey.features import build_index_maps, find_player, skater_panel, team_schedule
 from hockey.model import forecast, skater
-from hockey.seasons import PROJECTION_SEASON
+from hockey.seasons import PROJECTION_SEASON, SEASON_LENGTH, season_label
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +156,11 @@ def main() -> None:
     points = projection.totals["goals"] + projection.totals["assists"]
     summary = forecast.summarize(projection, {"points": points})
 
-    print(f"\n=== projected {PROJECTION_SEASON} totals (assumes a full 82 games) ===")
+    # 84, not 82: the regular season expands in 2026-27.
+    games = SEASON_LENGTH[PROJECTION_SEASON]
+    print(
+        f"\n=== projected {season_label(PROJECTION_SEASON)} totals (assumes all {games} games) ==="
+    )
     print(summary.round(2).to_string(index=False))
 
     print("\n=== P(row outscores column, points) ===")

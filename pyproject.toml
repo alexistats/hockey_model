@@ -34,6 +34,7 @@ model = [
     "matplotlib>=3.8",
     # Writes the posterior trace to NetCDF; xarray has no built-in writer.
     "h5netcdf>=1.3",
+    "h5py>=3.10",
 ]
 dev = [
     "pytest>=8.0",

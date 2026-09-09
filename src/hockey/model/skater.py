@@ -273,16 +273,21 @@ def sample(
     draws: int = 1000,
     tune: int = 1000,
     chains: int = 4,
-    target_accept: float = 0.9,
+    target_accept: float = 0.95,
     seed: int = 20262027,
 ):
     """Sample with the JAX/numpyro NUTS backend.
 
     PyTensor's default backend needs a C++ compiler, which this machine does
     not have; without one it falls back to a pure-Python path far too slow for
-    a nightly re-fit. numpyro compiles through JAX instead. target_accept is
-    above the 0.8 default because hierarchical walks produce enough curvature
-    to throw divergences at 0.8.
+    a nightly re-fit. numpyro compiles through JAX instead.
+
+    target_accept is well above the 0.8 default. Hierarchical walks are curved
+    enough to throw divergences at 0.8, and the MVP makes it worse: with only a
+    few players, the position-level mean and the individual player offsets are
+    nearly the same quantity, so the sampler has a ridge to climb that simply
+    is not there once the pool is large enough for the pooling layer to be
+    doing real work.
     """
     with model:
         return pm.sample(
