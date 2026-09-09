@@ -182,6 +182,33 @@ def write_snapshot(
     return path
 
 
+DEFAULT_CONFIG = Path("config/league_2270.yaml")
+
+
+def load_scoring_from_yaml(path: Path | str = DEFAULT_CONFIG):
+    """Scoring rules from a checked-in config file rather than from Yahoo.
+
+    The live sync is authoritative and should be preferred; this exists so the
+    model is never blocked on Yahoo being reachable, and so a run is
+    reproducible offline. It goes through the same build_scoring(), so a
+    category the warehouse cannot serve fails here exactly as it would there -
+    the fallback cannot be a quieter path than the real one.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise LookupError(f"no league config at {path}")
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return build_scoring(
+        payload["league_key"],
+        [(row["display_name"], float(row["modifier"])) for row in payload["scoring"]],
+    )
+
+
+def load_roster_from_yaml(path: Path | str = DEFAULT_CONFIG) -> list[dict]:
+    payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    return payload["roster_positions"]
+
+
 def load_scoring(session: Session, league_key: str):
     """Rebuild the scoring rules from what is stored, with no network call.
 

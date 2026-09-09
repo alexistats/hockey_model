@@ -240,3 +240,40 @@ def test_score_draws_rejects_misaligned_shapes(scoring):
     draws["goals"] = np.zeros(5)
     with pytest.raises(ValueError, match="mismatched shapes"):
         score_draws(scoring, draws, "P")
+
+
+# --- the checked-in fallback config must behave exactly like the live one ---
+
+
+def test_yaml_config_produces_the_same_rules_as_the_live_shape():
+    """The fallback exists so the model is never blocked on Yahoo. It must not
+    be a quieter path: same builder, same refusals, same numbers."""
+    from hockey.yahoo.settings import load_scoring_from_yaml
+
+    from_file = load_scoring_from_yaml()
+    from_api_shape = build_scoring(from_file.league_key, LEAGUE_CATEGORIES)
+    assert set(from_file.skater_keys) == set(from_api_shape.skater_keys)
+    assert set(from_file.goalie_keys) == set(from_api_shape.goalie_keys)
+
+    line = {
+        "goals": 1,
+        "assists": 2,
+        "plus_minus": 2,
+        "ppp": 1,
+        "shp": 0,
+        "sog": 6,
+        "hits": 1,
+        "blocks": 1,
+    }
+    assert score_statline(from_file, line, "P") == pytest.approx(16.5)
+    goalie = {"games_started": 1, "wins": 1, "goals_against": 0, "saves": 30, "shutouts": 1}
+    assert score_statline(from_file, goalie, "G") == pytest.approx(20.0)
+
+
+def test_yaml_roster_matches_the_league():
+    from hockey.yahoo.settings import load_roster_from_yaml
+
+    roster = {r["position"]: r["count"] for r in load_roster_from_yaml()}
+    assert roster == {"C": 2, "LW": 2, "RW": 2, "D": 4, "G": 2, "BN": 5, "IR+": 2}
+    starters = sum(r["count"] for r in load_roster_from_yaml() if r["starting"])
+    assert starters == 12

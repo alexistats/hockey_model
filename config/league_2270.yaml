@@ -1,0 +1,48 @@
+# Fallback league config, transcribed from prompt.txt.
+#
+# The live Yahoo sync writes the same shape into league_stat_categories and
+# league_roster_positions. This file exists so the model is never blocked on
+# Yahoo being reachable, and so a model run is reproducible without a network
+# call. It goes through exactly the same build_scoring() as the live config,
+# so a category the warehouse cannot serve fails here too.
+#
+# When the Yahoo sync succeeds, prefer it: it is authoritative, and a mid-season
+# settings change would show up there and not here.
+
+league_key: "nhl.l.2270"
+league_id: "2270"
+season: 2026
+name: "League 2270"
+num_teams: 14
+scoring_type: headpoint # head-to-head points
+
+# display_name must match hockey/scoring/categories.py. Modifier is fantasy
+# points per unit; it can be negative.
+scoring:
+  # skaters
+  - { display_name: G, modifier: 5.0 }
+  - { display_name: A, modifier: 3.0 }
+  - { display_name: "+/-", modifier: 0.5 }
+  - { display_name: PPP, modifier: 0.5 }
+  - { display_name: SHP, modifier: 1.5 }
+  - { display_name: SOG, modifier: 0.5 }
+  - { display_name: HIT, modifier: 0.5 }
+  - { display_name: BLK, modifier: 0.5 }
+  # goalies
+  - { display_name: GS, modifier: 1.0 }
+  - { display_name: W, modifier: 6.0 }
+  - { display_name: GA, modifier: -1.5 }
+  - { display_name: SV, modifier: 0.3 }
+  - { display_name: SHO, modifier: 4.0 }
+
+# C,C,LW,LW,RW,RW,D,D,D,D,G,G,BN x5,IR+ x2.
+# 14 teams x 12 starting slots = 168 rostered starters, so a pool of roughly
+# 300 skaters and 80 goalies covers the draft with margin.
+roster_positions:
+  - { position: C, count: 2, starting: true }
+  - { position: LW, count: 2, starting: true }
+  - { position: RW, count: 2, starting: true }
+  - { position: D, count: 4, starting: true }
+  - { position: G, count: 2, starting: true }
+  - { position: BN, count: 5, starting: false }
+  - { position: "IR+", count: 2, starting: false }

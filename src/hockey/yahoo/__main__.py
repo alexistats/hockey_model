@@ -18,6 +18,7 @@ from pathlib import Path
 
 from hockey.config import settings as app_settings
 from hockey.db import SessionLocal
+from hockey.yahoo import callback as callback_mod
 from hockey.yahoo import crosswalk as crosswalk_mod
 from hockey.yahoo import oauth
 from hockey.yahoo import settings as settings_mod
@@ -41,6 +42,7 @@ def main() -> None:
     parser.add_argument(
         "command",
         choices=[
+            "login",
             "auth-url",
             "exchange",
             "game-key",
@@ -80,6 +82,21 @@ def main() -> None:
         print("3. Run, within about a minute (the code expires quickly):")
         print("   python -m hockey.yahoo exchange <code>")
         print()
+        return
+
+    if args.command == "login":
+        # The whole authorization in one step: open the browser, catch the
+        # redirect, exchange the code. The code lives about a minute, which is
+        # not long to be transcribing it out of a browser error page.
+        try:
+            code = callback_mod.capture_code(
+                app_settings.yahoo_redirect_uri, oauth.authorization_url()
+            )
+        except callback_mod.CallbackError as exc:
+            raise SystemExit(str(exc)) from None
+        oauth.exchange_code(code)
+        print()
+        print("Authorized. Token saved; you will not need to do this again.")
         return
 
     if args.command == "exchange":

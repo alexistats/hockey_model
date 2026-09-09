@@ -15,16 +15,11 @@ class Settings(BaseSettings):
     # --- Yahoo Fantasy Sports API ---
     yahoo_client_id: str = ""
     yahoo_client_secret: str = ""
-    # Yahoo rejects localhost and 127.0.0.1 as redirect URIs. An app with no
-    # hosted callback uses "oob", where Yahoo displays the authorization code
-    # on the page rather than redirecting.
-    yahoo_redirect_uri: str = "oob"
-    # Yahoo issues a token with no fantasy access at all when no scope is
-    # requested, and every Fantasy API call then returns 403 "This application
-    # is not authorized to perform this action" - which reads like an app
-    # misconfiguration but is not. Which scope is valid depends on how the app
-    # was registered: an app with Read/Write permission accepts only fspt-w and
-    # rejects fspt-r as an invalid scope. This project only ever issues GETs.
+    # Must match a Redirect URI registered on the Yahoo app exactly, port
+    # included. Yahoo does allow https://localhost:<port>; a mismatched port
+    # is rejected as "invalid redirect uri", indistinguishable from a wrong
+    # host, which makes it easy to blame the wrong thing.
+    yahoo_redirect_uri: str = "https://localhost:8080"
     yahoo_scope: str = "fspt-w"
     yahoo_league_id: str = ""
     yahoo_token_path: str = ".yahoo_token.json"

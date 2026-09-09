@@ -37,29 +37,37 @@ class YahooPermissionError(RuntimeError):
 
 # Yahoo answers 403 with "This application is not authorized to perform this
 # action", which reads like a malformed request and is not. The token exchange
-# succeeds, the token looks entirely normal, and it carries nothing - the token
-# response has no scope field to reveal that. The tell is that the same token
-# also 403s on Yahoo's own identity endpoint, which needs no fantasy permission
-# at all, so the problem is the app rather than the scope being asked for.
-PERMISSION_HELP = """Yahoo returned 403: the access token is valid but has no API permissions.
+# succeeds and the token looks entirely normal; it simply carries nothing, and
+# the token response has no scope field to reveal that.
+#
+# The trap is that authorizing against a redirect URI the app does not have
+# registered can still reach a login page and still yield a token - the "oob"
+# out-of-band value does exactly that for an app configured as a Confidential
+# Client with a real callback. The resulting token is refused everywhere,
+# including Yahoo's own identity endpoint, which looks exactly like a missing
+# API permission. Check the redirect URI first; it is the likelier cause and
+# the cheaper thing to rule out.
+PERMISSION_HELP = """Yahoo returned 403: the access token is valid but carries no API permissions.
 
-This is a setting on the Yahoo app itself, not something the code can request.
-A token from an app with no permissions is refused by every Yahoo endpoint,
-including the non-fantasy identity one, which is how to tell this apart from a
-scope problem.
+Two different causes produce this, and they are indistinguishable from the
+error alone. Check them in this order.
 
-To fix it:
-  1. Open https://developer.yahoo.com/apps/ and select the app.
-  2. Under API Permissions, tick 'Fantasy Sports' and choose Read
-     (or Read/Write).
-  3. Save. Yahoo may issue a new Client ID and Secret; if it does, copy both
-     into .env.
-  4. Set YAHOO_SCOPE to match: fspt-r for Read, fspt-w for Read/Write.
-  5. Re-authorize: python -m hockey.yahoo auth-url
+1. The redirect URI used to authorize is not one the app has registered.
+   Yahoo can still return a token in that case, and the token is then refused
+   everywhere. Open https://developer.yahoo.com/apps/, read the Redirect
+   URI(s) field, and set YAHOO_REDIRECT_URI in .env to match it character for
+   character, port included. Yahoo does allow https://localhost:<port>, so a
+   wrong port is the usual culprit; it is rejected exactly like a wrong host.
+   Do not use 'oob' for an app that has a real callback registered.
 
-If the permission cannot be added to the existing app, create a new one with
-Application Type 'Installed Application' and the Fantasy Sports permission set
-at creation time."""
+2. The app has no Fantasy Sports API permission. On the same page, under API
+   Permissions, tick 'Fantasy Sports' and choose Read or Read/Write, then set
+   YAHOO_SCOPE to match: fspt-r for Read, fspt-w for Read/Write.
+
+Either way the existing token cannot be upgraded, because permissions are
+fixed when it is issued. Re-authorize afterwards:
+
+    python -m hockey.yahoo auth-url"""
 
 
 def _is_retryable(exc: BaseException) -> bool:

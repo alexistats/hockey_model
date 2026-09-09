@@ -39,16 +39,19 @@ league id is the number in your league URL:
 
 ```bash
 python -m hockey.yahoo auth-url         # open the URL it prints, approve
-python -m hockey.yahoo exchange <code>  # the code Yahoo shows you
+python -m hockey.yahoo exchange <code>  # the code from the redirect URL
 python -m hockey.yahoo settings         # league scoring config -> Postgres + YAML
 python -m hockey.yahoo crosswalk        # Yahoo player ids -> NHL player ids
 python -m hockey.yahoo misses           # review anything it would not guess
 ```
 
-Yahoo rejects `localhost` and `127.0.0.1` as redirect URIs, so an app with no
-hosted callback uses `YAHOO_REDIRECT_URI=oob` and Yahoo shows the code on the
-page instead of redirecting. A mismatch here is not subtle: the authorize URL
-bounces to `/oauth2/error` with `invalid redirect uri` instead of a login page.
+`YAHOO_REDIRECT_URI` must be one of the Redirect URIs registered on the Yahoo
+app, matched exactly including the port. A mismatch answers `/oauth2/error`
+with `invalid redirect uri` instead of showing a login page.
+
+Do not substitute `oob` for an app that has a real callback registered.
+Yahoo accepts it as far as the login page and issues a token that every API
+call then refuses with a 403, which looks exactly like a missing permission.
 
 The code expires in about a minute, so run `exchange` promptly. After that the
 refresh token keeps itself alive and none of this repeats.

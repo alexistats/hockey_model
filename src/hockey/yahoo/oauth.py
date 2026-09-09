@@ -61,13 +61,17 @@ def _require_credentials() -> tuple[str, str]:
 def authorization_url() -> str:
     """The URL to open in a browser to authorize this app.
 
-    The redirect URI must match what the app accepts exactly - Yahoo compares
-    the full string, so a trailing slash is a mismatch. Yahoo also rejects
-    localhost and 127.0.0.1 outright, which is why the default is "oob": the
-    out-of-band flow, where Yahoo shows the code on the page instead of
-    redirecting. A mismatch shows up as a redirect to /oauth2/error with
-    error_description "invalid redirect uri" rather than a login page. A scope
-    the app was not registered for fails the same way, with "invalid scope".
+    The redirect URI must be one the Yahoo app has registered, matched exactly
+    - Yahoo compares the full string, so a different port or a trailing slash
+    is a mismatch and answers /oauth2/error with "invalid redirect uri" instead
+    of a login page. https://localhost:<port> is allowed; the port has to be
+    the registered one. A scope the app lacks fails the same way, with
+    "invalid scope".
+
+    The dangerous case is the one that does not fail here: authorizing with
+    "oob" against an app that has a real callback registered reaches the login
+    page and yields a token that every endpoint then refuses. So a login page
+    is not proof the redirect URI is right - only a working API call is.
     """
     client_id, _ = _require_credentials()
     query = urlencode(
@@ -79,6 +83,12 @@ def authorization_url() -> str:
             # carries no fantasy access, and every API call answers 403. The
             # token response gives no hint - it has no scope field at all.
             "scope": settings.yahoo_scope,
+            # Yahoo remembers a previous authorization and will silently
+            # reissue against the OLD grant, so re-authorizing after adding
+            # a scope returns a token that still lacks it - with no consent
+            # screen shown and no error anywhere. Asking for consent every
+            # time costs one click on a flow that runs once.
+            "prompt": "consent",
             "language": "en-us",
         }
     )
@@ -98,9 +108,9 @@ def _post_token(payload: dict[str, str]) -> Token:
         # does not contain the secret, only an error code and description.
         raise YahooAuthError(
             f"Yahoo rejected the token request ({response.status_code}): {response.text}. "
-            f"The usual causes are a redirect_uri the app does not accept (Yahoo "
-            f"rejects localhost; use oob), or an authorization code that has "
-            f"already expired - they last about a minute."
+            f"The usual causes are a redirect_uri that is not registered on the app "
+            f"(check the port), or an authorization code that has already expired "
+            f"- they last about a minute."
         )
     body = response.json()
     return Token(
