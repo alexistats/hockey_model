@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.yahoo_token.json
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.idea/
+artifacts/
+*.nc

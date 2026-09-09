@@ -1,0 +1,95 @@
+# hockey_models
+
+## What this is
+
+A standalone NHL data warehouse feeding an explainable Bayesian projection
+model, tuned to one Yahoo fantasy league. The output is a **variance
+description** per player - floor, ceiling, confidence, and head-to-head
+P(A > B) - not a single-point projection. It re-runs daily to condition on
+games already played and sharpen rest-of-season value.
+
+It feeds a separate draft-bot project. It is not that project.
+
+- Design decisions and their reasoning: `docs/architecture.md`
+- Schema meanings: `docs/data-dictionary.md` (generated, never hand-edited)
+- Model behaviour and calibration evidence: `docs/model-card.md`
+
+## Stack
+
+- Python 3.12, `uv` for the environment, SQLAlchemy 2.x, Alembic, Postgres 16
+- PyMC with the **numpyro/JAX** NUTS backend. This machine has no C++
+  toolchain, so PyTensor's default backend silently falls back to a
+  pure-Python path far too slow to be usable. Do not switch backends without
+  checking that first.
+- Postgres runs in Docker on **host port 5434**. 5432 is often a native
+  install and 5433 belongs to the Fantasy_hockey_app stack; this project must
+  never collide with either.
+
+## Layout
+
+- `src/hockey/ingest/` - the NHL and ESPN API clients and sync jobs. **The only
+  code allowed to call api-web.nhle.com.** Nothing else may.
+- `src/hockey/yahoo/` - the only code allowed to call the Yahoo Fantasy API.
+- `src/hockey/models/` - SQLAlchemy models
+- `src/hockey/scoring/` - stat line to fantasy points. Pure functions, no I/O.
+- `src/hockey/features/` - warehouse to modelling panel
+- `src/hockey/model/` - the PyMC model, and the forecast that reads its posterior
+- `src/hockey/calibration/` - posterior predictive checks, CRPS, backtests
+- `tests/` - pytest
+
+## Commands
+
+```
+docker compose up -d                          # Postgres on 5434
+uv pip install -e ".[dev,model]"
+alembic upgrade head
+
+python -m hockey.ingest backfill              # 8 seasons, several hours
+python -m hockey.ingest.coverage              # what actually landed
+python -m hockey.yahoo auth-url               # one-time Yahoo authorization
+python -m hockey.yahoo settings               # league scoring config
+python -m hockey.yahoo crosswalk              # Yahoo ids -> NHL ids
+python -m hockey.model.mvp                    # the end-to-end gate
+
+pytest
+ruff check . && ruff format --check .
+alembic revision --autogenerate -m "msg"
+```
+
+## Rules
+
+- **Evidence before claims.** Show model output, coverage numbers and
+  calibration tables. Never assert that something works.
+- **MVP-first.** Get the narrow version running end to end before widening it.
+- **Never guess an identity.** A wrong player id produces a complete, plausible
+  projection for the wrong player and nothing downstream can detect it. Record
+  the miss and move on. This applies to the Yahoo crosswalk, the ESPN injury
+  match, and anything else that joins on a name.
+- **Never silently zero a category.** A scoring category the warehouse cannot
+  serve is an error at config-load time, not a quiet zero for every player.
+- All scoring math lives in `scoring/` as pure, unit-tested functions, driven
+  by the league config in the database - never by a constant in the code.
+- Database changes go through Alembic. Every migration carries `COMMENT ON`
+  for new tables and columns: meaning, units, nullability semantics and data
+  source. Regenerate `docs/data-dictionary.md` afterwards.
+- Do not switch away from the Bayesian model. A non-Bayesian model may be added
+  as a **calibration benchmark only**, never as the primary - point estimates
+  cannot produce a calibrated floor and ceiling, which is the whole point.
+- Keep the sampler's convergence diagnostics next to any number derived from
+  it. A summary from chains that did not converge is not a result.
+
+## Things that are easy to get wrong here
+
+- **The team list is season-specific.** Seattle did not exist before 2021-22,
+  and Arizona became Utah in 2024-25. Driving a historical sync off today's
+  teams 404s on some and silently omits others. `sync_teams(season=...)` reads
+  the standings for a date inside that season.
+- **A player's team comes from the game log, not the players table.**
+  `players.team_abbrev` is one current value and is wrong for every past
+  season and every trade.
+- **The projected season is not in the fitting window.** It is the extra step
+  the random walk takes past the last observed season. Indexing it as an
+  observed season would read "not played yet" as "played and scored nothing".
+- **2026-27 is an 84-game season**, not 82, under the new collective agreement.
+- **`count` is overloaded in Yahoo's JSON.** It marks collection size and it is
+  also the number of a roster slot.

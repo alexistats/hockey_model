@@ -1,0 +1,133 @@
+I'm starting a new project. I have three existing assets to REUSE — read them
+  before proposing anything:
+
+  1. A fantasy-hockey app at
+     C:\Users\alexi\Documents\development\projects\Fantasy_hockey_app\fantasy-hockey
+     — reuse its Postgres DB + NHL ingest layer (NOT its league features).
+  2. A Bayesian scoring model at C:\Users\alexi\OneDrive\fantasy_hockey\model —
+     this is the CORE of what I'm building, not a starting point to replace.
+  3. My Yahoo fantasy league's real scoring settings (pulled via Yahoo's API).
+  Right now, the settings for the league are:
+  - 14 teams
+  - Live draft pick time 1 minute
+  - Head to head points scoring type
+  - No max acquisitions over the season
+  - No max trades for season
+  - Season ends March 3 2027
+  - Waiver time 1 day
+  - Waiver type Continual rolling list
+  - Waiver mode Standard
+  - Allow injured players from waivers or free agents to be added directly to injury slot
+  - Post draft players are free agents
+  - 3 acquisitions max per week
+  - Weekly deadline Daily - Tomorrow
+  - Start scoring on Week 1
+  - Playoffs 8 teams, week 24, 25, 26 (ends Sunday Apr 4)
+  - Playoff tie-breaker Higher seed wins
+  - Roster positions: C, C, LW, LW, RW, RW, D, D, D, D, G, G, BN, BN, BN, BN, BN, IR+, IR+
+  - Goals: 5
+  - Assists: 3
+  - Plus minus: 0.5
+  - Power Play points ppp: 0.5
+  - Short handed points SHP: 1.5
+  - Shots on Goal: 0.5
+  - Hits: 0.5
+  - Blocks: 0.5
+  - goalies:
+  - Games Started: 1
+  - Wins: 6
+  - Goals Against: -1.5
+  - Saves: 0.3
+  - Shutouts: 4
+
+  GOAL: A standalone, fully-populated NHL data warehouse feeding an explainable
+  Bayesian scoring/projection model tuned to my Yahoo league. The model's whole
+  point is a VARIANCE DESCRIPTION per player — floor / ceiling / confidence and
+  head-to-head P(A > B) — NOT a single-point projection. It must be re-runnable
+  daily to condition on games already played and sharpen rest-of-season value.
+
+  === THE MODEL (the heart of this) ===
+  The existing model's `game_level_modelling.py` is a hierarchical Bayesian
+  state-space model in PyMC and is the RIGHT foundation — keep its architecture:
+  - Player latent scoring rate as a GaussianRandomWalk across seasons (drifts year
+    to year — captures breakout/decline, e.g. a player who's elite one year and
+    injury-hit the next).
+  - Opponent/team strength as an AR(1) process per team across seasons.
+  - Home/away effect; Poisson likelihoods for count stats.
+  - Posterior predictive over the REMAINING schedule → full distribution of
+    rest-of-season totals; condition on games already played so a daily re-run
+    updates the projection.
+  (Ignore the older `model.py` — it's an inferior linear regression. Also note the
+  old `data_prep_bayesian.py` fakes PPP=PPG and SHP=SHG, which is wrong.)
+
+  DO NOT switch away from the Bayesian paradigm — it's chosen deliberately because
+  point-estimate models can't give calibrated floor/ceiling/confidence. You MAY
+  add a non-Bayesian model (e.g. NGBoost / quantile gradient boosting) ONLY as a
+  calibration benchmark, never as the primary.
+
+  === WORK TO DO ===
+
+  STEP 1 — Warehouse (replace the model's hacky data layer):
+  - Copy from the app repo: the ingest layer `backend/app/ingest/` (the ONLY thing
+    allowed to call api-web.nhle.com — keep that isolation) and the NHL-data
+    models/migrations ONLY (players, skater_game_logs, goalie_game_logs, nhl_games,
+    nhl_teams, nhl_plays). Drop all league/roster/matchup/draft/trade/user tables.
+    Read the app's docs/data-dictionary.md for exact column meanings first.
+  - The existing model reads hand-scraped Hockey-Reference .txt files, manual
+    schedule files, dummy-row hacks, and hardcodes 31 teams (it's 32 now; ARI→UTA).
+    REPLACE all of that: the model reads clean per-game logs + schedules from
+    Postgres. This is the biggest win — the model is currently starved of clean data.
+  - Backfill by WHOLE SEASON (the ingest is season-oriented, not per-player):
+    ~6 complete recent seasons for all players — this gives full recent careers for
+    young players for free and the most-relevant window for veterans, with no
+    "active player" filtering. Do NOT try to backfill each player's entire career.
+    FIRST verify how far back api-web.nhle.com returns complete game logs (and
+    play-by-play, which is shallower) — the real data floor may cap the depth.
+    Optionally do ONE deeper pull (10+ seasons) used solely to fit the population
+    aging-curve prior. Run the secondary per-player stats sync so ppp/save_pctg/
+    shutouts aren't NULL. Idempotent, resumable, polite to the API; log coverage/gaps.
+
+  STEP 2 — Yahoo scoring config:
+  - Use the official Yahoo Fantasy Sports API (OAuth2) to read my league's real
+    scoring categories + roster positions. Drive the model from this config — don't
+    hardcode categories. Store the config in its own table/file.
+  - Faceoff wins (FW) is a common Yahoo category with NO column in the schema —
+    derive it from nhl_plays faceoff events (details.winning/losingPlayerId).
+    Derive or clearly flag any other category the schema doesn't store.
+
+  STEP 3 — Extend + harden the model:
+  - Extend from goals+assists to ALL my league's scoring categories, each with an
+    appropriate likelihood (mostly Poisson; goalies need care), then convert stat
+    posteriors → fantasy-points posterior under my league config.
+  - Add PARTIAL POOLING across players (multilevel priors by position/peer group)
+    so rookies and thin-data players shrink toward sensible means instead of
+    producing unstable, ultra-wide posteriors.
+  - Add an AVAILABILITY / games-played component (expected GP or a per-game "plays"
+    Bernoulli) — the remaining-schedule prediction must not assume the player plays
+    every game. Plug in the app repo's ESPN injury data as a signal. (This is the
+    other half of the "elite year vs injury-wrecked year" problem — games missed,
+    not just a lower rate.)
+  - Add CALIBRATION VALIDATION: posterior predictive checks + a proper scoring rule
+    (CRPS) on held-out seasons. Floor/ceiling is only useful if the intervals are
+    actually calibrated — prove they are.
+  - Plan the DAILY-RERUN compute story: NUTS per player × ~400 players × daily is
+    heavy. Consider a faster backend (numpyro/nutpie), variational inference for
+    interim updates, or reduced draws, run as an overnight batch.
+
+  STEP 4 — Output for the draft bot (separate project):
+  - Per player: posterior mean, floor (5th pct), ceiling (95th pct), and the full
+    draw set; plus head-to-head P(A > B). Keep eligibility from Yahoo's API (NOT
+    the app repo's ESPN-sourced player_eligibility). This feeds a risk-tunable
+    draft strategy (safe/high-floor early, high-ceiling upside later).
+
+  INTEGRATION GOTCHAS:
+  - ID crosswalk: Yahoo IDs ≠ NHL IDs. Build a name+team normalization crosswalk
+    (the app repo already did this for ESPN — reuse the approach, log ambiguous/
+    unmatched players rather than guessing).
+
+  CONSTRAINTS: MVP-first — get the existing G+A model running end-to-end off the
+  warehouse for a few players BEFORE extending to all categories/pooling. All
+  scoring math as pure, unit-tested functions. Evidence before claims — show model
+  output and calibration numbers, don't assert. Free/local only (personal project).
+  Start in plan mode: read the app's CLAUDE.md + docs/, read game_level_modelling.py
+  and analysis.py, then propose a plan and get my approval before coding.

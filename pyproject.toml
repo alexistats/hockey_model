@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hockey-models"
+version = "0.1.0"
+description = "NHL data warehouse + Bayesian fantasy hockey projection model"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.1",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "httpx>=0.27",
+    "tenacity>=8.2",
+    "pyyaml>=6.0",
+    "pandas>=2.2",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+# The sampler. Split out so the warehouse can be built and tested without
+# waiting on the JAX/PyMC install.
+model = [
+    "pymc>=5.16",
+    "arviz>=0.18",
+    # CPU-only JAX + numpyro: PyMC's default PyTensor backend needs a C++
+    # toolchain on Windows and silently falls back to unusably slow sampling
+    # without one. numpyro compiles through JAX instead. See docs/architecture.md.
+    "jax>=0.4.30",
+    "numpyro>=0.15",
+    "matplotlib>=3.8",
+    # Writes the posterior trace to NetCDF; xarray has no built-in writer.
+    "h5netcdf>=1.3",
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+]
+
+# src layout: the distribution is the `hockey` package. alembic/, scripts/ and
+# tests/ sit alongside and ship with neither the wheel nor the editable install.
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["hockey*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Migrations are written by `alembic revision --autogenerate` in its own house
+# style: long COMMENT ON strings, typing.Union, its own import order. Rewriting
+# them by hand each time only creates diff noise against the next generated one.
+"alembic/versions/*" = ["E501", "I001", "UP007", "UP035"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

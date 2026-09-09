@@ -1,0 +1,22 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: hockey
+      POSTGRES_PASSWORD: hockey
+      POSTGRES_DB: hockey_models
+    ports:
+      # 5434 on the host: 5432 is often a native Postgres and 5433 belongs to
+      # the Fantasy_hockey_app compose stack. This project must never collide
+      # with either.
+      - "5434:5432"
+    volumes:
+      - hockey_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hockey -d hockey_models"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  hockey_pgdata:
