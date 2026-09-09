@@ -44,11 +44,18 @@ class NhlTeam(Base):
     name: Mapped[str] = mapped_column(
         String(64), comment="Full team name, English locale (e.g. 'Toronto Maple Leafs')."
     )
-    conference: Mapped[str] = mapped_column(
-        String(16), comment="Conference name: 'Eastern' or 'Western'."
+    conference: Mapped[str | None] = mapped_column(
+        String(16),
+        comment="Conference name: 'Eastern' or 'Western'. NULL for a season played "
+        "without conferences - 2020-21 used four temporary divisions and had none. "
+        "Reflects the most recently synced season, not any particular one.",
     )
     division: Mapped[str] = mapped_column(
-        String(16), comment="Division name: Atlantic, Metropolitan, Central, or Pacific."
+        String(32),
+        comment="Division name: Atlantic, Metropolitan, Central, or Pacific - or the "
+        "temporary 2020-21 names (Scotia North, MassMutual East, Discover Central, "
+        "Honda West), which is why this is wider than 16 characters. Reflects the "
+        "most recently synced season.",
     )
     nhl_team_id: Mapped[int | None] = mapped_column(
         Integer,

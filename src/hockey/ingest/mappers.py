@@ -32,12 +32,21 @@ def toi_to_seconds(toi: str) -> int:
 
 
 def team_row(team: schemas.RawStandingsTeam) -> dict:
-    return {
+    """One nhl_teams row.
+
+    The conference key is omitted rather than set to None when the season had
+    no conferences (2020-21). upsert_rows only updates the columns a row
+    actually provides, so omitting it leaves whatever a neighbouring season
+    already wrote intact instead of erasing it.
+    """
+    row = {
         "abbrev": team.team_abbrev.default,
         "name": team.team_name.default,
-        "conference": team.conference_name,
         "division": team.division_name,
     }
+    if team.conference_name is not None:
+        row["conference"] = team.conference_name
+    return row
 
 
 def player_row(player: schemas.RawRosterPlayer, team_abbrev: str) -> dict:

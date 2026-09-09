@@ -15,8 +15,8 @@ NHL teams. Source: GET /v1/standings/now (api-web.nhle.com); numeric id backfill
 |---|---|---|---|---|
 | `abbrev` | VARCHAR(3) | no | PK | 3-letter NHL team abbreviation (e.g. TOR). PK; changes on franchise relocation (e.g. ARI->UTA), which would need a data migration. |
 | `name` | VARCHAR(64) | no |  | Full team name, English locale (e.g. 'Toronto Maple Leafs'). |
-| `conference` | VARCHAR(16) | no |  | Conference name: 'Eastern' or 'Western'. |
-| `division` | VARCHAR(16) | no |  | Division name: Atlantic, Metropolitan, Central, or Pacific. |
+| `conference` | VARCHAR(16) | yes |  | Conference name: 'Eastern' or 'Western'. NULL for a season played without conferences - 2020-21 used four temporary divisions and had none. Reflects the most recently synced season, not any particular one. |
+| `division` | VARCHAR(32) | no |  | Division name: Atlantic, Metropolitan, Central, or Pacific - or the temporary 2020-21 names (Scotia North, MassMutual East, Discover Central, Honda West), which is why this is wider than 16 characters. Reflects the most recently synced season. |
 | `nhl_team_id` | INTEGER | yes |  | NHL numeric team id (e.g. TOR=10). NULL until schedule sync backfills it; the standings endpoint does not provide it. |
 
 ## `players`

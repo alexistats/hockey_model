@@ -133,3 +133,52 @@ def test_an_empty_game_log_is_allowed():
     """The endpoint omits gameLog entirely for a player with no games that
     season, which is a documented empty case rather than a break."""
     assert schemas.RawSkaterGameLog.model_validate({"playerStatsSeasons": []}).game_log == []
+
+
+# --- the 2020-21 standings, which had no conferences at all ---
+
+
+def test_a_season_without_conferences_parses():
+    """2020-21 was played in four temporary divisions with no conference
+    structure. The field is genuinely absent from the data, not from the
+    payload, so requiring it stopped the backfill on a correct response."""
+    team = schemas.RawStandingsTeam.model_validate(
+        {
+            "teamAbbrev": {"default": "TOR"},
+            "teamName": {"default": "Toronto Maple Leafs"},
+            "divisionName": "Scotia North",
+        }
+    )
+    assert team.conference_name is None
+    assert team.division_name == "Scotia North"
+
+
+def test_a_row_from_a_conferenceless_season_omits_the_conference_key():
+    """Omitted, not None: upsert_rows only writes the columns a row provides,
+    so a neighbouring season's conference is left intact rather than erased."""
+    from hockey.ingest.mappers import team_row
+
+    team = schemas.RawStandingsTeam.model_validate(
+        {
+            "teamAbbrev": {"default": "TOR"},
+            "teamName": {"default": "Toronto Maple Leafs"},
+            "divisionName": "Scotia North",
+        }
+    )
+    row = team_row(team)
+    assert "conference" not in row
+    assert row["division"] == "Scotia North"
+
+
+def test_a_normal_season_still_carries_its_conference():
+    from hockey.ingest.mappers import team_row
+
+    team = schemas.RawStandingsTeam.model_validate(
+        {
+            "teamAbbrev": {"default": "TOR"},
+            "teamName": {"default": "Toronto Maple Leafs"},
+            "conferenceName": "Eastern",
+            "divisionName": "Atlantic",
+        }
+    )
+    assert team_row(team)["conference"] == "Eastern"

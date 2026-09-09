@@ -25,7 +25,12 @@ class LocalizedName(RawModel):
 class RawStandingsTeam(RawModel):
     team_abbrev: LocalizedName
     team_name: LocalizedName
-    conference_name: str
+    # Absent for 2020-21 only, and correctly so: that season was played in four
+    # temporary divisions (Scotia North, MassMutual East, Discover Central,
+    # Honda West) with no conference structure at all. Every other season in
+    # the window carries it. Optional here rather than required because the
+    # field is genuinely missing from the data, not from the payload.
+    conference_name: str | None = None
     division_name: str
 
 
