@@ -15,7 +15,10 @@ class Settings(BaseSettings):
     # --- Yahoo Fantasy Sports API ---
     yahoo_client_id: str = ""
     yahoo_client_secret: str = ""
-    yahoo_redirect_uri: str = "https://localhost:8000"
+    # Yahoo rejects localhost and 127.0.0.1 as redirect URIs. An app with no
+    # hosted callback uses "oob", where Yahoo displays the authorization code
+    # on the page rather than redirecting.
+    yahoo_redirect_uri: str = "oob"
     yahoo_league_id: str = ""
     yahoo_token_path: str = ".yahoo_token.json"
 

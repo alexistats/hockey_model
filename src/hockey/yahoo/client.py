@@ -109,6 +109,17 @@ def unwrap(node: Any, key: str) -> list:
     return out
 
 
+def _as_list(node) -> list:
+    """Yahoo nests a collection one or two levels deep depending on the
+    endpoint. Treat a bare dict as a one-element collection so both shapes
+    walk the same way."""
+    if node is None:
+        return []
+    if isinstance(node, dict):
+        return [node]
+    return [x for x in node if isinstance(x, dict | list)]
+
+
 class YahooFantasyClient:
     def __init__(self, timeout: float = 30.0):
         self._client = httpx.Client(base_url=BASE_URL, timeout=timeout, follow_redirects=True)
@@ -145,6 +156,26 @@ class YahooFantasyClient:
         """
         game = merge_fragments(self.get_flat("/game/nhl")["game"])
         return str(game["game_key"])
+
+    def my_leagues(self) -> list[dict]:
+        """Every NHL league the authenticated user is in, this season.
+
+        This is how the league key gets confirmed rather than typed. A league
+        id copied from the wrong place produces a 400 with no hint about what
+        the right one was; asking Yahoo which leagues the account is actually
+        in removes the guess entirely.
+        """
+        content = self.get_flat("/users;use_login=1/games;game_keys=nhl/leagues")
+        leagues: list[dict] = []
+        for user in _as_list(content.get("users")):
+            user = merge_fragments(user.get("user", user))
+            for game in _as_list(user.get("games")):
+                game = merge_fragments(game.get("game", game))
+                for league in _as_list(game.get("leagues")):
+                    league = merge_fragments(league.get("league", league))
+                    if "league_key" in league:
+                        leagues.append(league)
+        return leagues
 
     def league_settings(self, league_key: str) -> dict:
         """The league record merged with its settings, as one dict."""

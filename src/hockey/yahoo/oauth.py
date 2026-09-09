@@ -61,8 +61,12 @@ def _require_credentials() -> tuple[str, str]:
 def authorization_url() -> str:
     """The URL to open in a browser to authorize this app.
 
-    The redirect URI must match the one registered on the Yahoo app exactly -
-    Yahoo compares the full string, so a trailing slash is a mismatch.
+    The redirect URI must match what the app accepts exactly - Yahoo compares
+    the full string, so a trailing slash is a mismatch. Yahoo also rejects
+    localhost and 127.0.0.1 outright, which is why the default is "oob": the
+    out-of-band flow, where Yahoo shows the code on the page instead of
+    redirecting. A mismatch shows up as a redirect to /oauth2/error with
+    error_description "invalid redirect uri" rather than a login page.
     """
     client_id, _ = _require_credentials()
     query = urlencode(
@@ -91,8 +95,9 @@ def _post_token(payload: dict[str, str]) -> Token:
         # does not contain the secret, only an error code and description.
         raise YahooAuthError(
             f"Yahoo rejected the token request ({response.status_code}): {response.text}. "
-            f"The usual cause is a redirect_uri that does not match the one registered "
-            f"on the app, or an authorization code that has already expired."
+            f"The usual causes are a redirect_uri the app does not accept (Yahoo "
+            f"rejects localhost; use oob), or an authorization code that has "
+            f"already expired - they last about a minute."
         )
     body = response.json()
     return Token(
@@ -144,7 +149,7 @@ def load_token() -> Token:
         raise YahooAuthError(
             f"no Yahoo token at {path}. Run `python -m hockey.yahoo auth-url`, open the "
             f"URL it prints, approve, then run `python -m hockey.yahoo exchange <code>` "
-            f"with the code from the redirect address bar."
+            f"with the code Yahoo shows you."
         )
     return Token(**json.loads(path.read_text(encoding="utf-8")))
 

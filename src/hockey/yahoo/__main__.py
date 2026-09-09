@@ -40,7 +40,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m hockey.yahoo")
     parser.add_argument(
         "command",
-        choices=["auth-url", "exchange", "game-key", "settings", "crosswalk", "misses", "dump"],
+        choices=[
+            "auth-url",
+            "exchange",
+            "game-key",
+            "my-leagues",
+            "settings",
+            "crosswalk",
+            "misses",
+            "dump",
+        ],
     )
     parser.add_argument("code", nargs="?", help="authorization code, for `exchange`")
     parser.add_argument("--league-id", default=None)
@@ -59,10 +68,14 @@ def main() -> None:
         print()
         print(f"   {oauth.authorization_url()}")
         print()
-        print("2. Yahoo redirects to:")
-        print(f"   {app_settings.yahoo_redirect_uri}?code=SOMETHING")
-        print("   The page will not load - that is expected, nothing is listening there.")
-        print("   Copy the value of `code` out of the address bar.")
+        if app_settings.yahoo_redirect_uri == "oob":
+            print("2. Yahoo will show the authorization code on the page itself.")
+            print("   Copy it. Nothing redirects anywhere.")
+        else:
+            print("2. Yahoo redirects to:")
+            print(f"   {app_settings.yahoo_redirect_uri}?code=SOMETHING")
+            print("   The page may not load; that is fine.")
+            print("   Copy the value of `code` out of the address bar.")
         print()
         print("3. Run, within about a minute (the code expires quickly):")
         print("   python -m hockey.yahoo exchange <code>")
@@ -80,6 +93,25 @@ def main() -> None:
     try:
         if args.command == "game-key":
             print(client.current_game_key())
+            return
+
+        if args.command == "my-leagues":
+            leagues = client.my_leagues()
+            if not leagues:
+                print(
+                    "Yahoo lists no NHL leagues for this account this season. If the "
+                    "draft has not happened yet the league should still appear, so "
+                    "check you authorized with the right Yahoo account."
+                )
+                return
+            print(f"{len(leagues)} NHL league(s) on this account:")
+            print()
+            for league in leagues:
+                print(f"  league_id  {league.get('league_id')}")
+                print(f"  league_key {league.get('league_key')}")
+                print(f"  name       {league.get('name')}")
+                print(f"  teams      {league.get('num_teams')}   season {league.get('season')}")
+                print()
             return
 
         if args.command == "dump":
