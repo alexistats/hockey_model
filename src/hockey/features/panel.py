@@ -29,7 +29,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from hockey.models import NhlTeam
-from hockey.seasons import FITTING_SEASONS
+from hockey.seasons import FITTING_SEASONS, SEASON_LENGTH
 
 REGULAR_SEASON = 2
 
@@ -267,6 +267,71 @@ def team_schedule(
     # own extra walk step.
     frame["opponent_idx"] = frame["opponent_abbrev"].map(maps.team_index).astype("int32")
     frame["team_idx"] = frame["team_abbrev"].map(maps.team_index).astype("int32")
+    return frame
+
+
+def availability_panel(
+    session: Session,
+    player_ids: list[int] | None = None,
+    seasons: list[int] | None = None,
+) -> pd.DataFrame:
+    """Games played against games available, per player-season.
+
+    This is what separates a player who scores at a high rate from a player who
+    scores at a high rate and is on the ice in April. Two players with the same
+    per-game projection are not the same pick if one of them plays 82 games and
+    the other plays 58.
+
+    A real caveat, worth knowing before trusting a number: a season in which a
+    player was called up in January looks identical here to a season in which
+    they were injured until January. Both show as low availability. The model
+    partially pools and lets the walk favour recent seasons, which softens it,
+    but a young player's early seasons will read as less available than they
+    truly were.
+    """
+    sql = """
+    SELECT s.player_id,
+           g.season,
+           count(*) AS games_played
+      FROM skater_game_logs s
+      JOIN nhl_games g ON g.nhl_game_id = s.game_id
+     WHERE g.game_type = :game_type
+       {season_filter}
+       {player_filter}
+     GROUP BY s.player_id, g.season
+     ORDER BY s.player_id, g.season
+    """
+    params: dict = {"game_type": REGULAR_SEASON}
+    season_filter = ""
+    if seasons:
+        season_filter = "AND g.season = ANY(:seasons)"
+        params["seasons"] = list(seasons)
+    player_filter = ""
+    if player_ids:
+        player_filter = "AND s.player_id = ANY(:player_ids)"
+        params["player_ids"] = list(player_ids)
+
+    frame = pd.DataFrame(
+        session.execute(
+            text(sql.format(season_filter=season_filter, player_filter=player_filter)), params
+        )
+        .mappings()
+        .all()
+    )
+    if frame.empty:
+        return frame
+    # Games the player could have played. Each season's real length, not 82:
+    # 2020-21 was 56 games, and treating it as 82 would read every player in it
+    # as chronically unavailable.
+    frame["games_available"] = frame["season"].map(SEASON_LENGTH)
+    if frame["games_available"].isna().any():
+        missing = sorted(frame.loc[frame["games_available"].isna(), "season"].unique())
+        raise ValueError(f"no known season length for {missing}; add it to hockey/seasons.py")
+    frame["games_available"] = frame["games_available"].astype(int)
+    # A player cannot dress for more games than the schedule holds; a trade
+    # mid-season can otherwise push the count past it.
+    frame["games_played"] = frame[["games_played", "games_available"]].min(axis=1)
+    frame["share"] = frame["games_played"] / frame["games_available"]
     return frame
 
 

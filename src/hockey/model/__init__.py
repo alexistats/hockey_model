@@ -1,3 +1,3 @@
-from hockey.model import forecast, skater
+from hockey.model import forecast, multi, project_multi, skater
 
-__all__ = ["forecast", "skater"]
+__all__ = ["forecast", "multi", "project_multi", "skater"]
