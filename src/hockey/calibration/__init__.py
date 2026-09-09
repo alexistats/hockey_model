@@ -1,3 +1,4 @@
+from hockey.calibration import backtest
 from hockey.calibration.scores import (
     calibration_report,
     coverage_table,
@@ -11,6 +12,7 @@ from hockey.calibration.scores import (
 )
 
 __all__ = [
+    "backtest",
     "calibration_report",
     "coverage_table",
     "crps",
