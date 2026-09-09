@@ -218,7 +218,23 @@ def build(data: MultiData) -> pm.Model:
         loading = pm.Deterministic("loading", pt.concatenate([[1.0], loading_rest]), dims="stat")
 
         # --- what each category does on its own ---
-        sigma_idio = pm.HalfNormal("sigma_idio", sigma=0.1, dims="stat")
+        # The anchor category gets NO walk of its own. This is what actually
+        # identifies the factor, and leaving it in was a real bug: fixing the
+        # goals loading at 1 pins the sign and scale only if goals has no other
+        # way to drift. Give goals an idiosyncratic walk as well and the factor
+        # can shrink while that walk grows and the other loadings grow to
+        # compensate, with no change to the fit. Four chains duly split into
+        # two modes - sigma_form 0.145 with a +0.97 assists loading, against
+        # sigma_form 0.053 with a -2.78 loading - whose products are the same
+        # size and opposite sign. r-hat came back at 1.74.
+        #
+        # With the anchor's own walk removed, the drift in goals *is* the
+        # factor, so the goals data pins both its scale and its direction, and
+        # every other category keeps its own residual movement.
+        sigma_idio_rest = pm.HalfNormal("sigma_idio_rest", sigma=0.1, shape=n_stats - 1)
+        sigma_idio = pm.Deterministic(
+            "sigma_idio", pt.concatenate([[0.0], sigma_idio_rest]), dims="stat"
+        )
         z_idio = pm.Normal("z_idio", 0.0, 1.0, dims=("stat", "player", "walk_step"))
         idio = pt.cumsum(
             pt.concatenate(
