@@ -66,7 +66,8 @@ def authorization_url() -> str:
     localhost and 127.0.0.1 outright, which is why the default is "oob": the
     out-of-band flow, where Yahoo shows the code on the page instead of
     redirecting. A mismatch shows up as a redirect to /oauth2/error with
-    error_description "invalid redirect uri" rather than a login page.
+    error_description "invalid redirect uri" rather than a login page. A scope
+    the app was not registered for fails the same way, with "invalid scope".
     """
     client_id, _ = _require_credentials()
     query = urlencode(
@@ -74,8 +75,10 @@ def authorization_url() -> str:
             "client_id": client_id,
             "redirect_uri": settings.yahoo_redirect_uri,
             "response_type": "code",
-            # Yahoo grants fantasy read access through the app's own
-            # permissions rather than a scope string on this request.
+            # Without this, Yahoo happily issues a valid bearer token that
+            # carries no fantasy access, and every API call answers 403. The
+            # token response gives no hint - it has no scope field at all.
+            "scope": settings.yahoo_scope,
             "language": "en-us",
         }
     )

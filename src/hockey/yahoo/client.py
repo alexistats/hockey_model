@@ -31,6 +31,37 @@ class YahooShapeError(ValueError):
     """Yahoo's payload was not the shape the parser expects."""
 
 
+class YahooPermissionError(RuntimeError):
+    """The token is valid but carries no API permissions."""
+
+
+# Yahoo answers 403 with "This application is not authorized to perform this
+# action", which reads like a malformed request and is not. The token exchange
+# succeeds, the token looks entirely normal, and it carries nothing - the token
+# response has no scope field to reveal that. The tell is that the same token
+# also 403s on Yahoo's own identity endpoint, which needs no fantasy permission
+# at all, so the problem is the app rather than the scope being asked for.
+PERMISSION_HELP = """Yahoo returned 403: the access token is valid but has no API permissions.
+
+This is a setting on the Yahoo app itself, not something the code can request.
+A token from an app with no permissions is refused by every Yahoo endpoint,
+including the non-fantasy identity one, which is how to tell this apart from a
+scope problem.
+
+To fix it:
+  1. Open https://developer.yahoo.com/apps/ and select the app.
+  2. Under API Permissions, tick 'Fantasy Sports' and choose Read
+     (or Read/Write).
+  3. Save. Yahoo may issue a new Client ID and Secret; if it does, copy both
+     into .env.
+  4. Set YAHOO_SCOPE to match: fspt-r for Read, fspt-w for Read/Write.
+  5. Re-authorize: python -m hockey.yahoo auth-url
+
+If the permission cannot be added to the existing app, create a new one with
+Application Type 'Installed Application' and the Fantasy Sports permission set
+at creation time."""
+
+
 def _is_retryable(exc: BaseException) -> bool:
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code >= 500
@@ -140,6 +171,8 @@ class YahooFantasyClient:
         )
         elapsed_ms = (time.monotonic() - start) * 1000
         logger.info("YAHOO GET %s -> %s (%.0f ms)", path, response.status_code, elapsed_ms)
+        if response.status_code == 403:
+            raise YahooPermissionError(PERMISSION_HELP)
         response.raise_for_status()
         return response.json()
 

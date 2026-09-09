@@ -21,7 +21,7 @@ from hockey.db import SessionLocal
 from hockey.yahoo import crosswalk as crosswalk_mod
 from hockey.yahoo import oauth
 from hockey.yahoo import settings as settings_mod
-from hockey.yahoo.client import YahooFantasyClient
+from hockey.yahoo.client import YahooFantasyClient, YahooPermissionError
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +91,8 @@ def main() -> None:
 
     client = YahooFantasyClient()
     try:
+        # A permissions problem is something for the reader to go and fix, not
+        # a stack trace to decode, so it prints as guidance and stops.
         if args.command == "game-key":
             print(client.current_game_key())
             return
@@ -165,6 +167,8 @@ def main() -> None:
                 for name, team, method in misses:
                     print(f"  {method:14s} {name}  ({team or 'no team'})")
                 return
+    except YahooPermissionError as exc:
+        raise SystemExit(str(exc)) from None
     finally:
         client.close()
 

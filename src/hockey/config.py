@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     # hosted callback uses "oob", where Yahoo displays the authorization code
     # on the page rather than redirecting.
     yahoo_redirect_uri: str = "oob"
+    # Yahoo issues a token with no fantasy access at all when no scope is
+    # requested, and every Fantasy API call then returns 403 "This application
+    # is not authorized to perform this action" - which reads like an app
+    # misconfiguration but is not. Which scope is valid depends on how the app
+    # was registered: an app with Read/Write permission accepts only fspt-w and
+    # rejects fspt-r as an invalid scope. This project only ever issues GETs.
+    yahoo_scope: str = "fspt-w"
     yahoo_league_id: str = ""
     yahoo_token_path: str = ".yahoo_token.json"
 
