@@ -350,10 +350,33 @@ def build(data: MultiData) -> pm.Model:
             dims="obs",
         )
 
-        pm.Binomial(
+        # Beta-Binomial, not Binomial. A Binomial treats 82 games as 82
+        # independent chances to be absent, giving a spread of under three
+        # games; measured across 756 players with five or more seasons, games
+        # played is 19 times more variable than that allows, because injuries
+        # are contiguous. One knee costs fifteen consecutive games, not fifteen
+        # unrelated ones, so the effective number of independent trials is
+        # nearer four than eighty-two.
+        #
+        # Getting this wrong is not a small mis-fit. With the likelihood far
+        # too tight, every season's variation had to be explained by the latent
+        # durability instead, which drove its stationary spread to 2.02 on the
+        # logit - a player at 89% availability ranging from 13% to 100% - and
+        # made availability 53% of the fantasy-point variance while
+        # over-covering at every interval. The held-out 90% interval caught
+        # 97.4% of outcomes.
+        #
+        # kappa is the concentration: large recovers the Binomial, small means
+        # clustered absences. The data implies roughly 3.5 before the AR(1)
+        # takes its share, so the prior sits at a mean of 10 and lets the fit
+        # settle it.
+        kappa_avail = pm.Gamma("kappa_avail", alpha=2.0, beta=0.2)
+        p_avail = pm.math.sigmoid(logit_avail[avail_player, avail_season])
+        pm.BetaBinomial(
             "games_played",
             n=avail_total,
-            p=pm.math.sigmoid(logit_avail[avail_player, avail_season]),
+            alpha=p_avail * kappa_avail,
+            beta=(1.0 - p_avail) * kappa_avail,
             observed=avail_played,
             dims="avail_obs",
         )

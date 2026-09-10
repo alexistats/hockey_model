@@ -72,8 +72,16 @@ def project(
     if assume_full_season:
         plays = np.ones((n_draws, n_games), dtype=bool)
     else:
-        p_play = 1.0 / (1.0 + np.exp(-_stack(posterior, "logit_avail")[:, :, -1]))
-        plays = rng.random((n_draws, n_games)) < p_play[:, game_player]
+        # Two stages, matching the Beta-Binomial the fit used. The posterior
+        # gives a player's durability level; the Beta draw is the season they
+        # happen to get, which is where clustered absences live. Collapsing
+        # these into one Bernoulli rate would put the season-to-season
+        # roughness back into the latent level, which is the mistake this
+        # replaced.
+        p_level = 1.0 / (1.0 + np.exp(-_stack(posterior, "logit_avail")[:, :, -1]))
+        kappa = _stack(posterior, "kappa_avail")[:, None]
+        p_season = rng.beta(p_level * kappa, (1.0 - p_level) * kappa)
+        plays = rng.random((n_draws, n_games)) < p_season[:, game_player]
 
     totals: dict[str, np.ndarray] = {}
     for k, stat in enumerate(stats):
