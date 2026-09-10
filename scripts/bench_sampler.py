@@ -29,8 +29,7 @@ args = parser.parse_args()
 # Must happen before anything imports jax.
 if args.mode == "devices":
     os.environ["XLA_FLAGS"] = (
-        os.environ.get("XLA_FLAGS", "")
-        + f" --xla_force_host_platform_device_count={args.chains}"
+        os.environ.get("XLA_FLAGS", "") + f" --xla_force_host_platform_device_count={args.chains}"
     ).strip()
 
 import pandas as pd  # noqa: E402

@@ -35,11 +35,31 @@ def _stack(posterior: xr.Dataset, name: str) -> np.ndarray:
     return posterior[name].stack(sample=("chain", "draw")).transpose("sample", ...).to_numpy()
 
 
+def _get(posterior: xr.Dataset, name: str, shared, n_draws: int) -> np.ndarray:
+    """A parameter's draws, or its frozen value broadcast across them.
+
+    In a staged fit the shared parameters are held fixed and never enter the
+    posterior, so the projection has to read them from where they were fixed.
+    Broadcasting rather than special-casing keeps one projection path for both
+    kinds of fit.
+    """
+    if name in posterior:
+        return _stack(posterior, name)
+    if shared is None or name not in shared.values:
+        raise KeyError(
+            f"{name!r} is neither in the posterior nor among the fixed shared "
+            f"parameters; the projection cannot proceed without it"
+        )
+    value = np.asarray(shared.values[name])
+    return np.broadcast_to(value, (n_draws, *value.shape))
+
+
 def project(
     idata,
     data: MultiData,
     seed: int = 20262027,
     assume_full_season: bool = False,
+    shared=None,
 ) -> MultiProjection:
     """Season totals per category, over the schedule each player actually has.
 
@@ -65,9 +85,9 @@ def project(
     # The last walk step is the projected season, so the drift into a season
     # nobody has played is carried rather than the latent state being frozen.
     mu_player = _stack(posterior, "mu_player")[:, :, :, -1]  # (draws, stat, player)
-    opponent = _stack(posterior, "opponent")[:, :, :, -1]  # (draws, stat, team)
-    b_home = _stack(posterior, "b_home")  # (draws, stat)
     n_draws = mu_player.shape[0]
+    opponent = _get(posterior, "opponent", shared, n_draws)[:, :, :, -1]
+    b_home = _get(posterior, "b_home", shared, n_draws)
 
     if assume_full_season:
         plays = np.ones((n_draws, n_games), dtype=bool)
@@ -79,7 +99,7 @@ def project(
         # roughness back into the latent level, which is the mistake this
         # replaced.
         p_level = 1.0 / (1.0 + np.exp(-_stack(posterior, "logit_avail")[:, :, -1]))
-        kappa = _stack(posterior, "kappa_avail")[:, None]
+        kappa = _get(posterior, "kappa_avail", shared, n_draws)[:, None]
         p_season = rng.beta(p_level * kappa, (1.0 - p_level) * kappa)
         plays = rng.random((n_draws, n_games)) < p_season[:, game_player]
 
@@ -98,8 +118,8 @@ def project(
     # signed; the season total is rounded because the league scores whole
     # plus/minus, not a fractional one.
     pm_player = _stack(posterior, "pm_player")
-    b_home_pm = _stack(posterior, "b_home_pm")
-    sigma_pm = _stack(posterior, "sigma_pm")
+    b_home_pm = _get(posterior, "b_home_pm", shared, n_draws)
+    sigma_pm = _get(posterior, "sigma_pm", shared, n_draws)
     pm_mu = pm_player[:, game_player] + b_home_pm[:, None] * game_home[None, :]
     pm_draws = rng.normal(pm_mu, sigma_pm[:, None]) * plays
     totals[SIGNED_STAT] = np.rint(pm_draws @ indicator)

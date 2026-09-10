@@ -164,13 +164,24 @@ def prepare(
     )
 
 
-def build(data: MultiData) -> pm.Model:
+def build(data: MultiData, shared=None) -> pm.Model:
     panel = data.panel
     index = data.player_index
     stats = list(data.stats)
     n_stats, n_players = len(stats), len(data.players)
     n_steps = data.n_steps
     positions = list(POOLING_POSITIONS)
+
+    # Stage two: the values every player shares are held at what stage one
+    # measured, and only this batch's own latents are sampled. `fixed` returns
+    # the frozen value when there is one and otherwise builds the prior, so
+    # there is a single model definition rather than two that can drift apart.
+    frozen = shared.values if shared is not None else {}
+    if shared is not None:
+        shared.check_compatible(data.maps, tuple(stats))
+
+    def fixed(name, build_prior):
+        return frozen[name] if name in frozen else build_prior()
 
     obs_player = panel["player_id"].map(index).to_numpy("int32")
     obs_season = panel["season_idx"].to_numpy("int32")
@@ -198,13 +209,15 @@ def build(data: MultiData) -> pm.Model:
 
     with pm.Model(coords=coords) as model:
         # --- where each player's rates start ---
-        mu_position = pm.Normal(
+        mu_position = fixed(
             "mu_position",
-            mu=prior_means[:, None],
-            sigma=1.0,
-            dims=("stat", "position"),
+            lambda: pm.Normal(
+                "mu_position", mu=prior_means[:, None], sigma=1.0, dims=("stat", "position")
+            ),
         )
-        sigma_player = pm.HalfNormal("sigma_player", sigma=0.6, dims="stat")
+        sigma_player = fixed(
+            "sigma_player", lambda: pm.HalfNormal("sigma_player", sigma=0.6, dims="stat")
+        )
         z_player = pm.Normal("z_player", 0.0, 1.0, dims=("stat", "player"))
         baseline = pm.Deterministic(
             "baseline",
@@ -239,7 +252,9 @@ def build(data: MultiData) -> pm.Model:
         # Setting the prior from the whole population to fit a subset of it is
         # standard empirical Bayes, and honest here because the quantity is a
         # property of NHL scoring rather than of the players in any one fit.
-        sigma_form = pm.LogNormal("sigma_form", mu=np.log(0.094), sigma=0.25)
+        sigma_form = fixed(
+            "sigma_form", lambda: pm.LogNormal("sigma_form", mu=np.log(0.094), sigma=0.25)
+        )
         z_form = pm.Normal("z_form", 0.0, 1.0, dims=("player", "walk_step"))
         form = pm.Deterministic(
             "form",
@@ -255,8 +270,13 @@ def build(data: MultiData) -> pm.Model:
         # moves against a player's form. Allowing negative loadings bought no
         # fit and opened a mirror mode where the factor flips sign and every
         # loading follows it.
-        loading_rest = pm.HalfNormal("loading_rest", sigma=1.0, shape=n_stats - 1)
-        loading = pm.Deterministic("loading", pt.concatenate([[1.0], loading_rest]), dims="stat")
+        if "loading" in frozen:
+            loading = frozen["loading"]
+        else:
+            loading_rest = pm.HalfNormal("loading_rest", sigma=1.0, shape=n_stats - 1)
+            loading = pm.Deterministic(
+                "loading", pt.concatenate([[1.0], loading_rest]), dims="stat"
+            )
 
         # --- what each category does on its own ---
         # The anchor category gets NO walk of its own. This is what actually
@@ -272,10 +292,13 @@ def build(data: MultiData) -> pm.Model:
         # With the anchor's own walk removed, the drift in goals *is* the
         # factor, so the goals data pins both its scale and its direction, and
         # every other category keeps its own residual movement.
-        sigma_idio_rest = pm.HalfNormal("sigma_idio_rest", sigma=0.1, shape=n_stats - 1)
-        sigma_idio = pm.Deterministic(
-            "sigma_idio", pt.concatenate([[0.0], sigma_idio_rest]), dims="stat"
-        )
+        if "sigma_idio" in frozen:
+            sigma_idio = frozen["sigma_idio"]
+        else:
+            sigma_idio_rest = pm.HalfNormal("sigma_idio_rest", sigma=0.1, shape=n_stats - 1)
+            sigma_idio = pm.Deterministic(
+                "sigma_idio", pt.concatenate([[0.0], sigma_idio_rest]), dims="stat"
+            )
         z_idio = pm.Normal("z_idio", 0.0, 1.0, dims=("stat", "player", "walk_step"))
         idio = pt.cumsum(
             pt.concatenate(
@@ -302,7 +325,7 @@ def build(data: MultiData) -> pm.Model:
         # data: once talent is measured out of sample, its correlation with
         # rate of decline is 0.00. Elite players decline like everyone else,
         # and the impression otherwise is survivorship.
-        age_scale = pm.Normal("age_scale", mu=1.0, sigma=0.25)
+        age_scale = fixed("age_scale", lambda: pm.Normal("age_scale", mu=1.0, sigma=0.25))
 
         mu_player = pm.Deterministic(
             "mu_player",
@@ -321,20 +344,32 @@ def build(data: MultiData) -> pm.Model:
         # x[t] = rho*x[t-1] + sigma*e[t] into x = e @ M', where M[t,j] is
         # rho^(t-j) below the diagonal, is the identical process as one matrix
         # multiply - and over nine seasons that matrix is 9 by 9.
-        rho = pm.TruncatedNormal("rho", mu=0.0, sigma=0.3, lower=0.0, upper=1.0, dims="stat")
-        sigma_team = pm.HalfNormal("sigma_team", sigma=0.08, dims="stat")
-        z_team = pm.Normal("z_team", 0.0, 1.0, dims=("stat", "team", "walk_step"))
-
+        # Shared by the opponent process and the availability deviations: the
+        # lag between two walk steps, and a mask so a season cannot affect the
+        # past. Plain constants, needed whether or not the opponent process is
+        # frozen.
         lag = np.arange(n_steps)[:, None] - np.arange(n_steps)[None, :]
-        causal = (lag >= 0).astype("float64")  # a season cannot affect the past
-        decay = rho[:, None, None] ** lag[None, :, :] * causal[None, :, :]
-        innovations = sigma_team[:, None, None] * z_team
-        opponent = pm.Deterministic(
-            "opponent",
-            (decay[:, None, :, :] * innovations[:, :, None, :]).sum(axis=-1),
-            dims=("stat", "team", "walk_step"),
-        )
-        b_home = pm.Normal("b_home", 0.0, 0.5, dims="stat")
+        causal = (lag >= 0).astype("float64")
+
+        if "opponent" in frozen:
+            # Frozen whole: this drops rho, sigma_team and the z_team latents
+            # together with the AR construction, which is 1,848 of the ~15,000
+            # parameters a joint fit carries.
+            opponent = frozen["opponent"]
+        else:
+            rho = pm.TruncatedNormal("rho", mu=0.0, sigma=0.3, lower=0.0, upper=1.0, dims="stat")
+            sigma_team = pm.HalfNormal("sigma_team", sigma=0.08, dims="stat")
+            z_team = pm.Normal("z_team", 0.0, 1.0, dims=("stat", "team", "walk_step"))
+
+            decay = rho[:, None, None] ** lag[None, :, :] * causal[None, :, :]
+            innovations = sigma_team[:, None, None] * z_team
+            opponent = pm.Deterministic(
+                "opponent",
+                (decay[:, None, :, :] * innovations[:, :, None, :]).sum(axis=-1),
+                dims=("stat", "team", "walk_step"),
+            )
+
+        b_home = fixed("b_home", lambda: pm.Normal("b_home", 0.0, 0.5, dims="stat"))
 
         log_rate = (
             mu_player[:, obs_player, obs_season]
@@ -357,8 +392,11 @@ def build(data: MultiData) -> pm.Model:
         # A random walk is the right shape for a scoring rate, which genuinely
         # drifts and has no home to return to. It is the wrong shape for
         # durability, which does.
-        mu_avail = pm.Normal("mu_avail", mu=PRIOR_LOGIT_AVAILABILITY, sigma=1.0, dims="position")
-        sigma_avail = pm.HalfNormal("sigma_avail", sigma=0.7)
+        mu_avail = fixed(
+            "mu_avail",
+            lambda: pm.Normal("mu_avail", mu=PRIOR_LOGIT_AVAILABILITY, sigma=1.0, dims="position"),
+        )
+        sigma_avail = fixed("sigma_avail", lambda: pm.HalfNormal("sigma_avail", sigma=0.7))
         z_avail = pm.Normal("z_avail", 0.0, 1.0, dims="player")
         durability = mu_avail[position_idx] + sigma_avail * z_avail
 
@@ -366,8 +404,10 @@ def build(data: MultiData) -> pm.Model:
         # carries into the next one and then fades, and the uncertainty at the
         # projection step settles at the stationary spread instead of growing
         # with the length of the history.
-        phi_avail = pm.Beta("phi_avail", alpha=2.0, beta=2.0)
-        sigma_avail_season = pm.HalfNormal("sigma_avail_season", sigma=0.5)
+        phi_avail = fixed("phi_avail", lambda: pm.Beta("phi_avail", alpha=2.0, beta=2.0))
+        sigma_avail_season = fixed(
+            "sigma_avail_season", lambda: pm.HalfNormal("sigma_avail_season", sigma=0.5)
+        )
         z_avail_season = pm.Normal("z_avail_season", 0.0, 1.0, dims=("player", "walk_step"))
         avail_decay = phi_avail**lag * causal
         avail_dev = (
@@ -382,12 +422,12 @@ def build(data: MultiData) -> pm.Model:
         # 1% of the variance that separates players and averages to roughly
         # zero across the league by construction, so more structure would be
         # machinery spent on noise.
-        mu_pm = pm.Normal("mu_pm", 0.0, 0.2)
-        sigma_pm_player = pm.HalfNormal("sigma_pm_player", 0.2)
+        mu_pm = fixed("mu_pm", lambda: pm.Normal("mu_pm", 0.0, 0.2))
+        sigma_pm_player = fixed("sigma_pm_player", lambda: pm.HalfNormal("sigma_pm_player", 0.2))
         z_pm = pm.Normal("z_pm", 0.0, 1.0, dims="player")
         pm_player = pm.Deterministic("pm_player", mu_pm + sigma_pm_player * z_pm, dims="player")
-        b_home_pm = pm.Normal("b_home_pm", 0.0, 0.2)
-        sigma_pm = pm.HalfNormal("sigma_pm", 1.5)
+        b_home_pm = fixed("b_home_pm", lambda: pm.Normal("b_home_pm", 0.0, 0.2))
+        sigma_pm = fixed("sigma_pm", lambda: pm.HalfNormal("sigma_pm", 1.5))
         pm.Normal(
             "plus_minus",
             mu=pm_player[obs_player] + b_home_pm * obs_home,
@@ -416,7 +456,7 @@ def build(data: MultiData) -> pm.Model:
         # clustered absences. The data implies roughly 3.5 before the AR(1)
         # takes its share, so the prior sits at a mean of 10 and lets the fit
         # settle it.
-        kappa_avail = pm.Gamma("kappa_avail", alpha=2.0, beta=0.2)
+        kappa_avail = fixed("kappa_avail", lambda: pm.Gamma("kappa_avail", alpha=2.0, beta=0.2))
         p_avail = pm.math.sigmoid(logit_avail[avail_player, avail_season])
         pm.BetaBinomial(
             "games_played",
