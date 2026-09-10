@@ -12,6 +12,7 @@ import logging
 from hockey.db import SessionLocal
 from hockey.ingest import sync
 from hockey.ingest.client import EspnApiClient, NhlApiClient
+from hockey.keepawake import keep_awake
 
 # Fitting window agreed in docs/architecture.md: 2018-19 through 2025-26.
 DEFAULT_SEASONS = [
@@ -89,6 +90,12 @@ def main() -> None:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+    with keep_awake("NHL backfill"):
+        _main(args)
+
+
+def _main(args) -> None:
 
     if args.seasons:
         seasons = parse_seasons(args.seasons)

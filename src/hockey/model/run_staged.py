@@ -22,6 +22,7 @@ from hockey.features import (
     build_index_maps,
     skater_panel,
 )
+from hockey.keepawake import keep_awake
 from hockey.model import multi, shared, staged
 from hockey.model.birthdates import player_birth_dates
 from hockey.model.run import build_schedule, choose_pool
@@ -57,6 +58,12 @@ def main() -> None:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+    with keep_awake("full-pool draft board"):
+        _main(args)
+
+
+def _main(args) -> None:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     scoring = load_scoring_from_yaml()

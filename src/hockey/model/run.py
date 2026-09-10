@@ -27,6 +27,7 @@ from hockey.features import (
     skater_panel,
     team_schedule,
 )
+from hockey.keepawake import keep_awake
 from hockey.model import multi, project_multi
 from hockey.model.birthdates import player_birth_dates
 from hockey.seasons import PROJECTION_SEASON, SEASON_LENGTH, season_label
@@ -104,6 +105,12 @@ def main() -> None:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+    with keep_awake("draft board fit"):
+        _main(args)
+
+
+def _main(args) -> None:
     out_dir = Path(args.out) if args.out else ARTIFACTS
     out_dir.mkdir(parents=True, exist_ok=True)
 

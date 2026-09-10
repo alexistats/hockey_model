@@ -13,6 +13,7 @@ import arviz as az
 
 from hockey.calibration.backtest import biggest_misses, prepare_backtest, render, score_backtest
 from hockey.db import SessionLocal
+from hockey.keepawake import keep_awake
 from hockey.model import multi
 from hockey.seasons import season_label
 from hockey.yahoo.settings import load_scoring_from_yaml
@@ -31,6 +32,12 @@ def main() -> None:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+    with keep_awake("held-out calibration"):
+        _main(args)
+
+
+def _main(args) -> None:
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
 
     with SessionLocal() as session:
