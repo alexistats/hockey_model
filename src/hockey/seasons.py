@@ -27,8 +27,11 @@ FITTING_SEASONS = [
 # The season being drafted for.
 PROJECTION_SEASON = 20262027
 
-# Regular-season games actually played, for the coverage report and for the
-# games-played component. The two short seasons are real, not gaps.
+# Nominal season length, used only for display and for the coverage report's
+# expectations. The availability component does NOT read this: it counts the
+# games each player's own team actually played, because in 2019-20 the teams
+# differ from each other - between 66 and 74 before the stoppage - so no
+# single number is right for that season.
 SEASON_LENGTH = {
     20182019: 82,
     20192020: 82,  # scheduled; 68-71 were played before the stoppage

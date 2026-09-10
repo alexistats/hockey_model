@@ -29,7 +29,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from hockey.models import NhlTeam
-from hockey.seasons import FITTING_SEASONS, SEASON_LENGTH
+from hockey.seasons import FITTING_SEASONS
 
 REGULAR_SEASON = 2
 
@@ -289,12 +289,32 @@ def availability_panel(
     but a young player's early seasons will read as less available than they
     truly were.
     """
+    # games_available is the number of games the player's own team actually
+    # played, not a constant. Teams played between 66 and 74 games in 2019-20
+    # before the stoppage, so a fixed 82 records a player who dressed for all
+    # 71 of his team's games as having missed eleven. No single constant can
+    # fix that season, because the teams differ from each other.
     sql = """
+    WITH team_games AS (
+        SELECT season, abbrev, count(*) AS played
+          FROM (
+                SELECT season, home_team_abbrev AS abbrev FROM nhl_games
+                 WHERE game_type = :game_type
+                 UNION ALL
+                SELECT season, away_team_abbrev AS abbrev FROM nhl_games
+                 WHERE game_type = :game_type
+               ) x
+         GROUP BY season, abbrev
+    )
     SELECT s.player_id,
            g.season,
-           count(*) AS games_played
+           count(*) AS games_played,
+           -- A traded player has two teams; take the larger schedule, which is
+           -- the closer reading of how many games were available to them.
+           max(t.played) AS games_available
       FROM skater_game_logs s
       JOIN nhl_games g ON g.nhl_game_id = s.game_id
+      JOIN team_games t ON t.season = g.season AND t.abbrev = s.team_abbrev
      WHERE g.game_type = :game_type
        {season_filter}
        {player_filter}
@@ -320,13 +340,6 @@ def availability_panel(
     )
     if frame.empty:
         return frame
-    # Games the player could have played. Each season's real length, not 82:
-    # 2020-21 was 56 games, and treating it as 82 would read every player in it
-    # as chronically unavailable.
-    frame["games_available"] = frame["season"].map(SEASON_LENGTH)
-    if frame["games_available"].isna().any():
-        missing = sorted(frame.loc[frame["games_available"].isna(), "season"].unique())
-        raise ValueError(f"no known season length for {missing}; add it to hockey/seasons.py")
     frame["games_available"] = frame["games_available"].astype(int)
     # A player cannot dress for more games than the schedule holds; a trade
     # mid-season can otherwise push the count past it.
