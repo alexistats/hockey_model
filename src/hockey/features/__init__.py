@@ -1,3 +1,4 @@
+from hockey.features import aging
 from hockey.features.panel import (
     GOALIE_STATS,
     SKATER_STATS,
@@ -12,6 +13,7 @@ from hockey.features.panel import (
 )
 
 __all__ = [
+    "aging",
     "GOALIE_STATS",
     "SKATER_STATS",
     "IndexMaps",

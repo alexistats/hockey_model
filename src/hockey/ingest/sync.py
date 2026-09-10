@@ -7,7 +7,7 @@ PPP/SHP/SV%/shutouts; per-player game logs fill those in afterwards.
 
 import logging
 import time
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import bindparam, delete, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -230,6 +230,54 @@ def sync_game_logs(session: Session, client: NhlApiClient, season: int, force: b
             logger.info("game logs: %d/%d", i, len(game_ids))
         time.sleep(BOXSCORE_DELAY_SECONDS)
     return len(game_ids)
+
+
+def sync_player_bios(session: Session, client: NhlApiClient, refresh: bool = False) -> int:
+    """Fill players.birth_date from the per-player landing page.
+
+    Only players who are missing one are fetched, so this is cheap to re-run
+    after a roster sync brings in new names. A birth date never changes, which
+    is why `refresh` exists but defaults off.
+    """
+    stmt = select(Player.nhl_id).order_by(Player.nhl_id)
+    if not refresh:
+        stmt = stmt.where(Player.birth_date.is_(None))
+    player_ids = list(session.scalars(stmt))
+    logger.info("fetching bios for %d players", len(player_ids))
+
+    # UPDATE, not upsert_rows. These players already exist and only one column
+    # is being filled, but Postgres validates the proposed INSERT row before it
+    # gets to the conflict clause, so a row carrying just an id and a birth date
+    # trips the NOT NULL on first_name. upsert_rows is for rows that would be
+    # valid as an insert; this is a pure update.
+    table = Player.__table__
+    statement = (
+        update(table).where(table.c.nhl_id == bindparam("pid")).values(birth_date=bindparam("born"))
+    )
+
+    def flush(batch):
+        if batch:
+            session.execute(statement, batch)
+            session.commit()
+
+    rows, missing = [], 0
+    for i, player_id in enumerate(player_ids, start=1):
+        raw = schemas.RawPlayerLanding.model_validate(client.player_landing(player_id))
+        if raw.birth_date:
+            rows.append({"pid": player_id, "born": date.fromisoformat(raw.birth_date)})
+        else:
+            missing += 1
+        if len(rows) >= 200:
+            flush(rows)
+            rows = []
+        if i % 200 == 0:
+            logger.info("bios: %d/%d", i, len(player_ids))
+        time.sleep(PLAYER_STATS_DELAY_SECONDS)
+    flush(rows)
+    logger.info(
+        "bios: %d players updated, %d had no birth date", len(player_ids) - missing, missing
+    )
+    return len(player_ids) - missing
 
 
 def sync_injuries(session: Session, client: EspnApiClient) -> dict[str, int]:

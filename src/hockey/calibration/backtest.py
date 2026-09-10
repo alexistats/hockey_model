@@ -25,8 +25,15 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from hockey.calibration.scores import calibration_report, render_report
-from hockey.features import availability_panel, build_index_maps, skater_panel, team_schedule
+from hockey.features import (
+    aging,
+    availability_panel,
+    build_index_maps,
+    skater_panel,
+    team_schedule,
+)
 from hockey.model import multi, project_multi
+from hockey.model.birthdates import player_birth_dates
 from hockey.model.multi import SIGNED_STAT
 from hockey.scoring import LeagueScoring, score_draws
 from hockey.seasons import FITTING_SEASONS, season_label
@@ -142,6 +149,11 @@ def prepare_backtest(session: Session, test_season: int, pool_size: int):
         maps=maps,
         player_names={int(r.player_id): r.name for r in pool.itertuples()},
         positions={int(r.player_id): r.position for r in pool.itertuples()},
+        birth_dates=player_birth_dates(session, player_ids),
+        # Measured over every season, including the held-out one. A population
+        # aging curve is a fact about hockey rather than about the test season,
+        # and it is what a drafter would already know.
+        aging_curve=aging.measure(session),
     )
     actuals = actual_totals(session, test_season, player_ids)
     return data, actuals

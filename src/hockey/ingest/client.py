@@ -65,6 +65,10 @@ class NhlApiClient:
     def play_by_play(self, game_id: int) -> dict:
         return self.get_json(f"/gamecenter/{game_id}/play-by-play")
 
+    def player_landing(self, player_id: int) -> dict:
+        """A player's bio page: birth date, height, draft details."""
+        return self.get_json(f"/player/{player_id}/landing")
+
     def player_game_log(self, player_id: int, season: int, game_type: int) -> dict:
         return self.get_json(f"/player/{player_id}/game-log/{season}/{game_type}")
 

@@ -62,6 +62,7 @@ def main() -> None:
             "schedule",
             "game-logs",
             "player-stats",
+            "bios",
             "play-by-play",
             "injuries",
             "backfill",
@@ -136,6 +137,10 @@ def main() -> None:
                 if args.target == "play-by-play":
                     logger.info("=== play-by-play %d ===", season)
                     sync.sync_play_by_play(session, client, season, force=args.force)
+
+            # Bios are per-player and timeless, so not season-scoped either.
+            if args.target == "bios":
+                sync.sync_player_bios(session, client)
 
             # Injuries come from ESPN (different host, own client) and are
             # current-state only, so they are not season-scoped.

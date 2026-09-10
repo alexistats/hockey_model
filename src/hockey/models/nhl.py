@@ -100,6 +100,13 @@ class Player(Base):
     shoots_catches: Mapped[str | None] = mapped_column(
         String(1), comment="Shoots (skaters) or catches (goalies): L or R. NULL for stub rows."
     )
+    birth_date: Mapped[date | None] = mapped_column(
+        Date,
+        comment="Date of birth, from GET /v1/player/{id}/landing. Feeds the aging curve: "
+        "a player's age at a given season is what lets the model separate a decline "
+        "that is age from a decline that is noise. NULL until the bios sync runs, and "
+        "for anyone the endpoint has no record of.",
+    )
 
 
 class NhlGame(Base):

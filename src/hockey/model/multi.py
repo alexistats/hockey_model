@@ -51,6 +51,7 @@ import pymc as pm
 import pytensor.tensor as pt
 
 from hockey.features import IndexMaps
+from hockey.features.aging import offsets_for
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,10 @@ class MultiData:
     player_names: dict[int, str]
     positions: list[str]
     maps: IndexMaps
+    # (n_stats, n_players, n_steps): the population aging curve's expected log
+    # offset for each player at each season, including the projected one.
+    age_offsets: np.ndarray
+    ages: np.ndarray
     stats: tuple[str, ...] = STATS
     projection_step: int = field(init=False)
 
@@ -113,6 +118,8 @@ def prepare(
     maps: IndexMaps,
     player_names: dict[int, str],
     positions: dict[int, str],
+    birth_dates: dict[int, object],
+    aging_curve: pd.DataFrame,
     stats: tuple[str, ...] = STATS,
 ) -> MultiData:
     players = sorted(int(p) for p in panel["player_id"].unique())
@@ -126,6 +133,21 @@ def prepare(
     availability = availability[availability["player_id"].isin(players)].copy()
     availability["player_idx"] = availability["player_id"].map(index)
     availability["season_idx"] = availability["season"].map(maps.season_index)
+    # Age at each walk step, including the projected season, which is the one
+    # after the last fitted season.
+    end_years = [s % 10000 for s in maps.seasons]
+    end_years.append(end_years[-1] + 1)
+    missing_dob = [p for p in players if birth_dates.get(p) is None]
+    if missing_dob:
+        raise ValueError(
+            f"no birth date for player(s) {missing_dob}; the aging curve cannot be "
+            f"applied to them. Run: python -m hockey.ingest bios"
+        )
+    ages = np.array(
+        [[year - birth_dates[p].year for year in end_years] for p in players], dtype=int
+    )
+    age_offsets = offsets_for(aging_curve, ages, list(stats))
+
     return MultiData(
         panel=panel.reset_index(drop=True),
         availability=availability.reset_index(drop=True),
@@ -136,6 +158,8 @@ def prepare(
             p if (p := positions.get(pid, "C")) in POOLING_POSITIONS else "C" for pid in players
         ],
         maps=maps,
+        age_offsets=age_offsets,
+        ages=ages,
         stats=stats,
     )
 
@@ -261,9 +285,31 @@ def build(data: MultiData) -> pm.Model:
             axis=2,
         )
 
+        # --- ageing ---
+        # The population curve enters as the EXPECTED level at each age, not as
+        # a subtraction from the answer. A player's own walk sits on top of it,
+        # so someone with years of evidence that they are not declining drifts
+        # above the curve, and someone with no contrary evidence follows it.
+        # That is the same partial pooling used for levels, applied to drift.
+        #
+        # The curve itself is fixed data, measured within players across 856
+        # careers - far more than any one fit contains, so estimating it here
+        # would only add noise. age_scale is the one concession: a single
+        # parameter that lets the fit say the curve is too strong or too weak,
+        # centred on trusting it.
+        #
+        # There is no interaction with talent, because there is none in the
+        # data: once talent is measured out of sample, its correlation with
+        # rate of decline is 0.00. Elite players decline like everyone else,
+        # and the impression otherwise is survivorship.
+        age_scale = pm.Normal("age_scale", mu=1.0, sigma=0.25)
+
         mu_player = pm.Deterministic(
             "mu_player",
-            baseline[:, :, None] + loading[:, None, None] * form[None, :, :] + idio,
+            baseline[:, :, None]
+            + age_scale * data.age_offsets
+            + loading[:, None, None] * form[None, :, :]
+            + idio,
             dims=("stat", "player", "walk_step"),
         )
 

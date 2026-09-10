@@ -20,6 +20,7 @@ from sqlalchemy import text
 from hockey.db import SessionLocal
 from hockey.export import beats, draft_board, rank
 from hockey.features import (
+    aging,
     availability_panel,
     build_index_maps,
     find_player,
@@ -27,6 +28,7 @@ from hockey.features import (
     team_schedule,
 )
 from hockey.model import multi, project_multi
+from hockey.model.birthdates import player_birth_dates
 from hockey.seasons import PROJECTION_SEASON, SEASON_LENGTH, season_label
 from hockey.yahoo.settings import load_scoring_from_yaml
 
@@ -93,10 +95,17 @@ def main() -> None:
     parser.add_argument("--draws", type=int, default=1000)
     parser.add_argument("--tune", type=int, default=1500)
     parser.add_argument("--chains", type=int, default=4)
+    parser.add_argument(
+        "--out",
+        default=None,
+        help="artifact directory; defaults to artifacts/board. Give each run its "
+        "own so a later one does not overwrite an earlier one's board.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    out_dir = Path(args.out) if args.out else ARTIFACTS
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     with SessionLocal() as session:
         players = (
@@ -116,6 +125,8 @@ def main() -> None:
             len(schedule),
         )
 
+        curve = aging.measure(session)
+        births = player_birth_dates(session, player_ids)
         data = multi.prepare(
             panel=panel,
             availability=availability,
@@ -123,6 +134,8 @@ def main() -> None:
             maps=maps,
             player_names={int(r.player_id): r.name for r in players.itertuples()},
             positions={int(r.player_id): r.position for r in players.itertuples()},
+            birth_dates=births,
+            aging_curve=curve,
         )
 
     model = multi.build(data)
@@ -198,13 +211,13 @@ def main() -> None:
         f"across {len(movement)} players"
     )
 
-    board.to_csv(ARTIFACTS / "draft_board.csv", index=False)
+    board.to_csv(out_dir / "draft_board.csv", index=False)
     np.save(
-        ARTIFACTS / "fantasy_points_draws.npy",
+        out_dir / "fantasy_points_draws.npy",
         np.asarray([projection.totals[s] for s in data.stats]),
     )
-    beats(projection, scoring).to_csv(ARTIFACTS / "head_to_head.csv")
-    idata.to_netcdf(str(ARTIFACTS / "trace.nc"))
+    beats(projection, scoring).to_csv(out_dir / "head_to_head.csv")
+    idata.to_netcdf(str(out_dir / "trace.nc"))
     print(f"\nwrote {ARTIFACTS}/draft_board.csv, head_to_head.csv, trace.nc")
 
 

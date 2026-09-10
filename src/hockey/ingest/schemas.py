@@ -223,3 +223,13 @@ class RawEspnTeamInjuries(RawModel):
 
 class RawEspnInjuries(RawModel):
     injuries: list[RawEspnTeamInjuries]
+
+
+# --- player/{id}/landing (bio) ---
+
+
+class RawPlayerLanding(RawModel):
+    player_id: int
+    # Optional because the endpoint genuinely omits it for a few older players,
+    # which is missing data rather than a change in the payload's shape.
+    birth_date: str | None = None
