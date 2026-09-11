@@ -22,7 +22,7 @@ from hockey.export import replacement_slots
 from hockey.seasons import PROJECTION_SEASON, SEASON_LENGTH, season_label
 from hockey.yahoo.settings import load_roster_from_yaml, load_scoring_from_yaml
 
-TEMPLATE = Path("artifacts/ui/draft_room.html")
+TEMPLATE = Path("ui/draft_room.html")
 N_TEAMS = 14
 
 # Enough draws for a head-to-head probability to be stable to about a point,

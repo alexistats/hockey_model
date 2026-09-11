@@ -218,3 +218,51 @@ Not 82. The collective agreement expands the regular season starting in
 2026-27, and the published schedule confirms it: 1344 regular-season games, 42
 home and 42 away per team. Treating it as 82 would understate every counting
 projection by about two and a half percent.
+
+## Positional value lives outside the model
+
+The model projects stat lines. It knows nothing about rosters, and it should
+not: the number that decides a pick is not a player's total but the gap between
+that player and whoever would otherwise fill the slot, and that gap changes
+with the league's shape rather than with any player's evidence.
+
+So `src/hockey/export/replacement.py` re-reads a finished posterior against the
+roster. Replacement level per position, value over replacement, tier breaks and
+the positional drop-off curve all come from the saved draws, and every one of
+them can be recomputed in milliseconds when the roster assumption changes. The
+draft interface does exactly that as players come off the board: a position
+that empties makes everyone left at it worth more, and a value column baked in
+at fit time cannot say so.
+
+Two decisions inside it are judgement rather than arithmetic, and both are
+parameters.
+
+Replacement sits past the *drafted* pool, not past the starting lineup. This
+league starts 12 and rosters 17, so 70 bench slots are filled before anyone
+reaches the waiver wire. The bench is charged to positions in proportion to
+starts, which is how managers actually carry spares.
+
+Tiers break on the probability that the next player outscores the one who
+opened the tier, not on the gap between their projections. Two players five
+points apart are a coin flip or a real step down depending entirely on how wide
+they are, and a gap-based tiering cannot tell those apart.
+
+## The draftable pool is chosen by league points, per position
+
+The pool was first ranked by goals and assists, and that was wrong twice.
+
+It ignored hits and blocks. Both are worth half a point in this league, and
+over two seasons a checker's hits outweigh a 20-goal season. Defencemen and
+grinders were being excluded on categories the league barely scores.
+
+Worse, it fixed the positional mix by accident. Centres are the deepest scoring
+position, so a single ranked list of 300 returned 112 of them and 64
+defencemen - for a league that drafts 84 defencemen. Replacement level at
+defence then fell outside the pool entirely and had to be read off the pool's
+worst players, which overstated every defenceman on the board.
+
+The pool is now ranked on fantasy points actually scored under the league
+config, and filled to a multiple of the slots the league drafts at each
+position. Stage one's sample is balanced the same way, because it estimates the
+per-position baselines and was previously fitted on whichever few defencemen
+scored like forwards.
