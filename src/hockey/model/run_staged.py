@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 from hockey.db import SessionLocal
-from hockey.export import rank
+from hockey.export import category_table, rank
 from hockey.features import (
     aging,
     availability_panel,
@@ -112,7 +112,7 @@ def _main(args) -> None:
             del idata
 
         # --- stage two ---
-        boards, diagnostics, draw_blocks = [], [], []
+        boards, categories, diagnostics, draw_blocks = [], [], [], []
         batches = staged.batch_players(pool, args.batch)
         progress = Progress(total=len(batches), label="batch", path=out / "progress.txt")
         for i, batch in enumerate(batches, start=1):
@@ -128,8 +128,15 @@ def _main(args) -> None:
                 include_opponent=args.opponent,
                 include_idio=tuple(args.idio_walks),
             )
-            board, draws = staged.projected_board(idata, data, scoring, shared=params)
+            board, draws, projection = staged.projected_board(idata, data, scoring, shared=params)
+            board["position"] = board["player_id"].map(
+                dict(zip(batch["player_id"].astype(int), batch["position"], strict=True))
+            )
+            board["team"] = board["player_id"].map(
+                dict(zip(batch["player_id"].astype(int), batch["current_team"], strict=True))
+            )
             boards.append(board)
+            categories.append(category_table(projection))
             draw_blocks.append((list(data.players), draws))
             row = staged.diagnose(idata, label)
             row["free_gb_after"] = round(staged.available_memory_gb(), 1)
@@ -138,10 +145,18 @@ def _main(args) -> None:
             # Write after every batch, so an interrupted run still leaves a board.
             staged.stack_boards(boards).to_csv(out / "draft_board.csv", index=False)
             pd.DataFrame(diagnostics).to_csv(out / "diagnostics.csv", index=False)
+            # Fantasy-point draws for head-to-head, and the per-category draws
+            # behind them so any later summary is a pass over this file, not a
+            # refit.
             np.savez_compressed(
                 out / f"draws_batch_{i:02d}.npz",
                 player_ids=np.array(data.players),
                 draws=draws.astype("float32"),
+                games_played=projection.games_played.astype("float32"),
+                **{f"stat_{k}": v.astype("float32") for k, v in projection.totals.items()},
+            )
+            pd.concat(categories, ignore_index=True).to_csv(
+                out / "category_projections.csv", index=False
             )
             del idata
 

@@ -90,6 +90,27 @@ def draft_board(
     return board.reset_index(drop=True)
 
 
+def category_table(projection: Projection) -> pd.DataFrame:
+    """One row per player: the projected total of every scoring input.
+
+    Mean plus the same floor and ceiling percentiles as the board, per
+    category, so a projection can be compared with any other source that
+    publishes goals, assists, shots and so on - and so a surprising fantasy
+    total can be traced to the category that produced it.
+    """
+    rows = []
+    for i, player_id in enumerate(projection.players):
+        row = {"player": projection.player_names[player_id], "player_id": player_id}
+        for stat, draws in projection.totals.items():
+            column = draws[:, i]
+            floor, ceiling = np.percentile(column, [FLOOR_PCT, CEILING_PCT])
+            row[stat] = column.mean()
+            row[f"{stat}_floor"] = floor
+            row[f"{stat}_ceiling"] = ceiling
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def rank(board: pd.DataFrame, appetite: str = "balanced") -> pd.DataFrame:
     """Order the board by risk appetite.
 

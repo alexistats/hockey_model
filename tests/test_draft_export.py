@@ -172,3 +172,17 @@ def test_head_to_head_chunking_is_invisible():
     one_go = head_to_head_from_draws(draws, names, chunk=9)
     chunked = head_to_head_from_draws(draws, names, chunk=2)
     pd.testing.assert_frame_equal(one_go, chunked)
+
+
+def test_the_category_table_reports_every_scoring_input(simple):
+    from hockey.export import category_table
+
+    table = category_table(simple).set_index("player")
+    for stat in simple.totals:
+        assert stat in table.columns
+        assert f"{stat}_floor" in table.columns
+        assert f"{stat}_ceiling" in table.columns
+    for player in table.index:
+        for stat in simple.totals:
+            row = table.loc[player]
+            assert row[f"{stat}_floor"] <= row[stat] <= row[f"{stat}_ceiling"]

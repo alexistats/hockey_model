@@ -60,13 +60,13 @@ def main() -> None:
 
     logger.info("joint fit on the %d subject players", len(subject))
     joint_idata, _ = staged.fit_stage_one(subject_data, args.draws, args.tune, args.chains)
-    joint_board, _ = staged.projected_board(joint_idata, subject_data, scoring)
+    joint_board, _, _ = staged.projected_board(joint_idata, subject_data, scoring)
     joint_diag = staged.diagnose(joint_idata, "joint")
     del joint_idata
 
     logger.info("staged fit on the same %d players", len(subject))
     staged_idata = staged.fit_batch(subject_data, params, args.draws, args.tune, args.chains)
-    staged_board, _ = staged.projected_board(staged_idata, subject_data, scoring, shared=params)
+    staged_board, _, _ = staged.projected_board(staged_idata, subject_data, scoring, shared=params)
     staged_diag = staged.diagnose(staged_idata, "staged")
     del staged_idata
 

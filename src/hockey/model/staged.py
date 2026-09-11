@@ -129,15 +129,14 @@ def summarise_comparison(comparison: pd.DataFrame) -> str:
     return "\n".join(lines)
 
 
-def projected_board(
-    idata, data: multi.MultiData, scoring, seed: int = 7, shared=None
-) -> tuple[pd.DataFrame, np.ndarray]:
-    """The board, and the fantasy-point draws behind it.
+def projected_board(idata, data: multi.MultiData, scoring, seed: int = 7, shared=None):
+    """The board, the fantasy-point draws behind it, and the projection itself.
 
     The draws are returned rather than discarded because head-to-head needs
     full distributions, not summaries. A first version of this kept only the
     board, and P(A beats B) then could not be produced without refitting every
-    batch - the traces were already gone.
+    batch - the traces were already gone. The projection carries the
+    per-category draws for the same reason.
     """
     from hockey.export import draft_board, fantasy_points
 
@@ -150,7 +149,7 @@ def projected_board(
     board["age"] = board["player_id"].map(dict(zip(data.players, data.ages[:, -1], strict=True)))
     # Columns follow projection.players order, which is what the caller needs
     # to line draws up with player ids across batches.
-    return board, fantasy_points(projection, scoring)
+    return board, fantasy_points(projection, scoring), projection
 
 
 def head_to_head_from_draws(draws: np.ndarray, names: list[str], chunk: int = 200) -> pd.DataFrame:
