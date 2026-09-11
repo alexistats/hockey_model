@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 from hockey.db import SessionLocal
-from hockey.export import category_table, rank
+from hockey.export import category_table, rank, replacement_slots
 from hockey.features import (
     aging,
     availability_panel,
@@ -29,7 +29,7 @@ from hockey.model.birthdates import player_birth_dates
 from hockey.model.run import build_schedule, choose_pool
 from hockey.progress import Progress
 from hockey.seasons import PROJECTION_SEASON, season_label
-from hockey.yahoo.settings import load_scoring_from_yaml
+from hockey.yahoo.settings import load_roster_from_yaml, load_scoring_from_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,15 @@ def main() -> None:
     parser.add_argument("--tune", type=int, default=800)
     parser.add_argument("--chains", type=int, default=4)
     parser.add_argument("--out", default="artifacts/board_full")
+    parser.add_argument("--teams", type=int, default=14, help="teams in the league")
+    parser.add_argument(
+        "--depth",
+        type=float,
+        default=1.4,
+        help="pool depth per position, as a multiple of the slots the league drafts. "
+        "Above 1 so replacement level is measured from inside the pool rather than "
+        "off its last player.",
+    )
     parser.add_argument(
         "--opponent",
         action="store_true",
@@ -86,8 +95,20 @@ def _main(args) -> None:
     with SessionLocal() as session:
         maps = build_index_maps(session)
         curve = aging.measure(session)
-        pool = choose_pool(session, args.pool)
-        logger.info("pool: %d skaters", len(pool))
+        # Quotas rather than one ranked list: the league is obliged to draft 84
+        # defencemen and a points-ranked top 300 supplies 64 of them, so the
+        # replacement level at defence would be measured off a pool that runs
+        # out before the league does.
+        slots = replacement_slots(load_roster_from_yaml(), args.teams)
+        quotas = {
+            position: int(round(n * args.depth)) for position, n in slots.items() if position != "G"
+        }
+        pool = choose_pool(session, args.pool, quotas=quotas)
+        logger.info(
+            "pool: %d skaters (%s)",
+            len(pool),
+            ", ".join(f"{k} {v}" for k, v in pool["position"].value_counts().items()),
+        )
 
         # --- stage one ---
         shared_path = out / "shared.npz"
@@ -95,7 +116,16 @@ def _main(args) -> None:
             params = shared.load(shared_path)
             logger.info("reusing shared parameters from %d players", params.n_source_players)
         else:
-            head = pool.head(args.stage_one)
+            # Stage one estimates the position-level means, so its sample has to
+            # contain every position. Taking the top 40 of one ranked list gives
+            # a defence mean fitted on whichever few defencemen scored like
+            # forwards, which is the opposite of a position baseline.
+            per_position = max(1, args.stage_one // pool["position"].nunique())
+            head = (
+                pool.groupby("position", sort=False)
+                .head(per_position)
+                .sort_values("recent_points", ascending=False)
+            )
             stage_one_data = prepare_for(session, head, maps, curve)
             idata, params = staged.fit_stage_one(
                 stage_one_data,

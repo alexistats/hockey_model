@@ -37,15 +37,35 @@ logger = logging.getLogger(__name__)
 
 ARTIFACTS = Path("artifacts/board")
 
-# The pool: skaters with enough recent NHL time to be draftable. Ranked by
-# games in the last two seasons so the list is current rather than historical.
+# The pool: skaters with enough recent NHL time to be draftable, ranked by what
+# they were actually worth in this league rather than by goals and assists.
+# Ranking on scoring alone was wrong twice over. It missed the defencemen and
+# checkers whose value is hits and blocks - half a point each here, which adds
+# up to more than a 20-goal season - and it left the pool far too thin at
+# defence, where 14 teams draft 84 and a ranking by points supplied 64. A
+# replacement level measured off a pool that runs out before the league does is
+# not a replacement level.
+#
+# The column expressions are fixed here and the weights are bound parameters, so
+# the league config drives the arithmetic without any of it reaching SQL as text.
+STAT_COLUMNS = {
+    "goals": "s.goals",
+    "assists": "s.assists",
+    "plus_minus": "s.plus_minus",
+    "ppp": "coalesce(s.ppp, 0)",
+    "shp": "coalesce(s.shp, 0)",
+    "sog": "s.sog",
+    "hits": "s.hits",
+    "blocks": "s.blocks",
+}
+
 POOL_SQL = """
 SELECT s.player_id,
        p.first_name || ' ' || p.last_name AS name,
        p.position,
        p.team_abbrev AS current_team,
        count(*) AS recent_games,
-       sum(s.goals + s.assists)::float AS recent_points
+       sum({points})::float AS recent_points
   FROM skater_game_logs s
   JOIN nhl_games g ON g.nhl_game_id = s.game_id
   JOIN players p ON p.nhl_id = s.player_id
@@ -56,15 +76,63 @@ SELECT s.player_id,
  GROUP BY s.player_id, p.first_name, p.last_name, p.position, p.team_abbrev
 HAVING count(*) >= :min_games
  ORDER BY recent_points DESC
- LIMIT :limit
 """
 
 
-def choose_pool(session, limit: int, recent=(20242025, 20252026), min_games=60) -> pd.DataFrame:
+def _points_expression(scoring) -> tuple[str, dict]:
+    terms, params = [], {}
+    for rule in scoring.skater_rules:
+        column = STAT_COLUMNS.get(rule.key)
+        if column is None:
+            raise KeyError(
+                f"category {rule.key!r} has no game-log column, so the pool cannot be "
+                f"ranked on what this league actually scores"
+            )
+        name = f"w_{rule.key}"
+        terms.append(f":{name} * {column}")
+        params[name] = float(rule.modifier)
+    return " + ".join(terms), params
+
+
+def choose_pool(
+    session,
+    limit: int,
+    recent=(20242025, 20252026),
+    min_games=60,
+    scoring=None,
+    quotas: dict[str, int] | None = None,
+) -> pd.DataFrame:
+    """The draftable pool, ranked by recent fantasy points in this league.
+
+    `quotas` takes the top N at each position instead of the top N overall.
+    Without it a single ranked list decides the mix, and the mix it produces is
+    not the one the roster needs: centres are the deepest scoring position, so
+    they crowd out the defencemen the league is obliged to draft.
+    """
+    if scoring is None:
+        scoring = load_scoring_from_yaml()
+    expression, weights = _points_expression(scoring)
     rows = session.execute(
-        text(POOL_SQL), {"recent": list(recent), "min_games": min_games, "limit": limit}
+        text(POOL_SQL.format(points=expression)),
+        {"recent": list(recent), "min_games": min_games, **weights},
     ).mappings()
-    return pd.DataFrame(rows)
+    pool = pd.DataFrame(rows)
+
+    if quotas:
+        kept = [
+            group.head(quotas.get(position, 0))
+            for position, group in pool.groupby("position", sort=False)
+        ]
+        pool = pd.concat(kept).sort_values("recent_points", ascending=False)
+        short = {
+            position: (quotas[position], int((pool["position"] == position).sum()))
+            for position in quotas
+            if int((pool["position"] == position).sum()) < quotas[position]
+        }
+        if short:
+            logger.warning("pool is short of its quota at %s (wanted, got)", short)
+        return pool.reset_index(drop=True)
+    return pool.head(limit).reset_index(drop=True)
 
 
 def named_pool(session, names: list[str]) -> pd.DataFrame:

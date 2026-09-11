@@ -35,6 +35,11 @@ It feeds a separate draft-bot project. It is not that project.
 - `src/hockey/features/` - warehouse to modelling panel
 - `src/hockey/model/` - the PyMC model, and the forecast that reads its posterior
 - `src/hockey/calibration/` - posterior predictive checks, CRPS, backtests
+- `src/hockey/export/` - the posterior read as a draft board. `draft.py` scores
+  draws into fantasy points; `replacement.py` re-reads the same posterior
+  against the league's roster shape. **Nothing here may change a posterior.**
+  Positional value depends on the roster, which changes mid-draft, and a refit
+  is never the right answer to that.
 - `tests/` - pytest
 
 ## Commands
@@ -50,6 +55,9 @@ python -m hockey.yahoo auth-url               # one-time Yahoo authorization
 python -m hockey.yahoo settings               # league scoring config
 python -m hockey.yahoo crosswalk              # Yahoo ids -> NHL ids
 python -m hockey.model.mvp                    # the end-to-end gate
+python -m hockey.model.run_staged --pool 300  # the draft board, ~20 min
+python -m hockey.export artifacts/board_v2    # replacement level, value, tiers
+python scripts/build_draft_ui.py artifacts/board_v2   # the single-file draft page
 
 pytest
 ruff check . && ruff format --check .
