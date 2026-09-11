@@ -34,6 +34,11 @@ logger = logging.getLogger(__name__)
 # these two bound.
 FLOOR_PCT = 10
 CEILING_PCT = 90
+# A second, tighter pair: the one-season-in-five outcomes. Over a career of
+# five or six fantasy-relevant seasons that is about one bad and one great
+# year, which is closer to what a pick is planned around than a one-in-ten.
+LOW_PCT = 20
+HIGH_PCT = 80
 
 
 def fantasy_points(
@@ -54,7 +59,8 @@ def draft_board(
 ) -> pd.DataFrame:
     """One row per player: the numbers a draft pick is actually made from.
 
-    `floor` and `ceiling` are the 10th and 90th percentiles. `spread` is the gap
+    `floor` and `ceiling` are the 10th and 90th percentiles, `p20` and `p80`
+    the one-in-five outcomes inside them. `spread` is the gap
     between them, which is the risk in the pick expressed in the same units as
     the reward - a player whose ceiling is 40 points above their floor is a
     different proposition from one whose range is 15, even at the same mean.
@@ -63,7 +69,9 @@ def draft_board(
     rows = []
     for i, player_id in enumerate(projection.players):
         draws = points[:, i]
-        floor, ceiling = np.percentile(draws, [FLOOR_PCT, CEILING_PCT])
+        floor, low, high, ceiling = np.percentile(
+            draws, [FLOOR_PCT, LOW_PCT, HIGH_PCT, CEILING_PCT]
+        )
         rows.append(
             {
                 "player": projection.player_names[player_id],
@@ -71,6 +79,8 @@ def draft_board(
                 "games": projection.games_per_player.get(player_id, 0),
                 "mean": draws.mean(),
                 "floor": floor,
+                "p20": low,
+                "p80": high,
                 "ceiling": ceiling,
                 "spread": ceiling - floor,
                 "sd": draws.std(),

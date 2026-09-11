@@ -53,6 +53,8 @@ def test_the_board_reports_floor_ceiling_and_spread(simple):
     row = board.iloc[0]
     assert row["mean"] == pytest.approx(240.0)
     assert row["spread"] == pytest.approx(row["ceiling"] - row["floor"])
+    # The one-in-five pair sits strictly inside the one-in-ten pair.
+    assert row["floor"] <= row["p20"] <= row["mean"] <= row["p80"] <= row["ceiling"]
 
 
 def test_a_missing_category_is_refused_not_scored_as_zero(simple):
