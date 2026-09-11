@@ -541,4 +541,10 @@ def sample(model, draws=500, tune=800, chains=4, target_accept=0.9, seed=2026202
             nuts_sampler="numpyro",
             random_seed=seed,
             progressbar=False,
+            # Our runners compute r-hat, ESS and divergences themselves with
+            # az.summary. PyMC's built-in check calls arviz_stats.ess, which in
+            # this environment can hit a circular import after a long sample and
+            # crash the process - discarding the posterior it just spent an hour
+            # on. A converged posterior is not the thing to lose to a warning.
+            compute_convergence_checks=False,
         )
