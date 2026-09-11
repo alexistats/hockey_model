@@ -30,8 +30,8 @@ def test_summarize_reports_mean_floor_and_ceiling_per_player_and_stat(projection
     assert len(frame) == 4  # two players x two stats
     row = frame[(frame.player == "Player A") & (frame.stat == "goals")].iloc[0]
     assert row["mean"] == pytest.approx(14.5)
-    assert row["floor_p5"] == pytest.approx(np.percentile(np.arange(10, 20), 5))
-    assert row["ceiling_p95"] == pytest.approx(np.percentile(np.arange(10, 20), 95))
+    assert row["floor_p10"] == pytest.approx(np.percentile(np.arange(10, 20), 10))
+    assert row["ceiling_p90"] == pytest.approx(np.percentile(np.arange(10, 20), 90))
     assert row["games"] == 84
 
 
@@ -79,8 +79,8 @@ def test_head_to_head_separates_players_with_equal_means():
     means = frame.set_index("player")["mean"]
     assert means["Steady"] == pytest.approx(means["Swingy"], abs=0.1)
     # Identical means, completely different floors and ceilings.
-    floors = frame.set_index("player")["floor_p5"]
-    assert floors["Steady"] > floors["Swingy"] + 40
+    floors = frame.set_index("player")["floor_p10"]
+    assert floors["Steady"] > floors["Swingy"] + 35
     # And an even head-to-head that the means alone could never reveal.
     matrix = head_to_head(projection, projection.totals["goals"])
     assert matrix.loc["Steady", "Swingy"] == pytest.approx(0.5, abs=0.01)
@@ -94,8 +94,8 @@ def test_summarize_returns_a_stable_sorted_frame(projection):
         "stat",
         "games",
         "mean",
-        "floor_p5",
-        "ceiling_p95",
+        "floor_p10",
+        "ceiling_p90",
         "sd",
     ]
     assert frame.equals(frame.sort_values(["player", "stat"]).reset_index(drop=True))

@@ -381,3 +381,29 @@ def find_player(session: Session, name: str) -> pd.DataFrame:
      ORDER BY games DESC
     """
     return pd.DataFrame(session.execute(text(sql), {"pattern": f"%{name}%"}).mappings().all())
+
+
+def aggregate_panel(panel: pd.DataFrame, stats: list[str], signed: str) -> pd.DataFrame:
+    """Collapse a per-game panel to its sufficient statistics.
+
+    For a Poisson with a log link, the likelihood depends on the data only
+    through the counts summed within each unique combination of predictors. So
+    82 separate games sharing a player, a season and a home/away flag can be
+    one row carrying their total and how many games it came from, and the fit
+    is arithmetically identical - not an approximation.
+
+    What makes this possible is dropping the opponent from the linear
+    predictor. With it, a cell is a player-season-opponent-home and there are
+    only two or three games in each, which saves almost nothing; without it,
+    193,958 rows become 6,096.
+
+    The signed category is summed too: a sum of n normals is normal with n
+    times the mean and sqrt(n) times the spread, which the model applies.
+    """
+    keys = ["player_id", "season_idx", "is_home"]
+    grouped = panel.groupby(keys, as_index=False)
+    aggregated = grouped.agg({**{c: "sum" for c in [*stats, signed]}, "game_id": "count"})
+    aggregated = aggregated.rename(columns={"game_id": "n_games"})
+    # opponent_idx is gone by construction; team_idx is carried for reference
+    # only and is meaningless once a traded player's games are pooled.
+    return aggregated.sort_values(keys).reset_index(drop=True)

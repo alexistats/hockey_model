@@ -228,12 +228,12 @@ def biggest_misses(result: dict, n: int = 10) -> pd.DataFrame:
         {
             "player": result["players"],
             "projected": mean,
-            "floor": np.percentile(draws, 5, axis=0),
-            "ceiling": np.percentile(draws, 95, axis=0),
+            "floor": np.percentile(draws, 10, axis=0),
+            "ceiling": np.percentile(draws, 90, axis=0),
             "actual": observed,
             "error": observed - mean,
             "z": (observed - mean) / sd,
         }
     )
-    frame["inside_90"] = (frame["actual"] >= frame["floor"]) & (frame["actual"] <= frame["ceiling"])
+    frame["inside_80"] = (frame["actual"] >= frame["floor"]) & (frame["actual"] <= frame["ceiling"])
     return frame.reindex(frame["z"].abs().sort_values(ascending=False).index).head(n)

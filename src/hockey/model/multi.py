@@ -50,7 +50,7 @@ import pandas as pd
 import pymc as pm
 import pytensor.tensor as pt
 
-from hockey.features import IndexMaps
+from hockey.features import IndexMaps, aggregate_panel
 from hockey.features.aging import offsets_for
 
 logger = logging.getLogger(__name__)
@@ -63,6 +63,15 @@ STATS: tuple[str, ...] = ("goals", "assists", "sog", "hits", "blocks", "ppp", "s
 # Signed, so it cannot be Poisson, and worth about 1% of the separating
 # variance. Modelled, but simply.
 SIGNED_STAT = "plus_minus"
+
+
+def model_structure(include_opponent: bool) -> tuple[str, ...]:
+    """The shared terms a model carries, for fingerprinting a stage-one fit."""
+    terms = ["position_means", "form_factor", "aging", "availability", "home"]
+    if include_opponent:
+        terms.append("opponent")
+    return tuple(terms)
+
 
 POOLING_POSITIONS = ("C", "LW", "RW", "D")
 
@@ -164,7 +173,7 @@ def prepare(
     )
 
 
-def build(data: MultiData, shared=None) -> pm.Model:
+def build(data: MultiData, shared=None, include_opponent: bool = True) -> pm.Model:
     panel = data.panel
     index = data.player_index
     stats = list(data.stats)
@@ -177,15 +186,30 @@ def build(data: MultiData, shared=None) -> pm.Model:
     # the frozen value when there is one and otherwise builds the prior, so
     # there is a single model definition rather than two that can drift apart.
     frozen = shared.values if shared is not None else {}
+    structure = model_structure(include_opponent)
     if shared is not None:
-        shared.check_compatible(data.maps, tuple(stats))
+        shared.check_compatible(data.maps, tuple(stats), structure)
 
     def fixed(name, build_prior):
         return frozen[name] if name in frozen else build_prior()
 
+    # Without the opponent in the linear predictor the likelihood collapses to
+    # its sufficient statistics: a player-season-home cell carrying the summed
+    # counts and how many games produced them. Arithmetically identical, and
+    # 33 times fewer rows.
+    if not include_opponent:
+        panel = aggregate_panel(panel, stats, SIGNED_STAT)
+        exposure = panel["n_games"].to_numpy("float64")
+    else:
+        exposure = np.ones(len(panel))
+
     obs_player = panel["player_id"].map(index).to_numpy("int32")
     obs_season = panel["season_idx"].to_numpy("int32")
-    obs_opponent = panel["opponent_idx"].to_numpy("int32")
+    obs_opponent = (
+        panel["opponent_idx"].to_numpy("int32")
+        if include_opponent
+        else np.zeros(len(panel), dtype="int32")
+    )
     obs_home = panel["is_home"].to_numpy("float64")
     observed = panel[stats].to_numpy("int64")  # (n_obs, n_stats)
     position_idx = np.array([positions.index(p) for p in data.positions], dtype="int32")
@@ -351,7 +375,15 @@ def build(data: MultiData, shared=None) -> pm.Model:
         lag = np.arange(n_steps)[:, None] - np.arange(n_steps)[None, :]
         causal = (lag >= 0).astype("float64")
 
-        if "opponent" in frozen:
+        if not include_opponent:
+            # Facing the league's best defence rather than its worst moves a
+            # projection by a couple of percent, against player-to-player
+            # differences of several hundred. Dropping the term also lets the
+            # likelihood collapse to its sufficient statistics, which is a
+            # 32-fold reduction in rows. Whether that trade is free is a
+            # question for the held-out backtest, not for taste.
+            opponent = np.zeros((n_stats, data.maps.n_teams, n_steps))
+        elif "opponent" in frozen:
             # Frozen whole: this drops rho, sigma_team and the z_team latents
             # together with the AR construction, which is 1,848 of the ~15,000
             # parameters a joint fit carries.
@@ -376,7 +408,15 @@ def build(data: MultiData, shared=None) -> pm.Model:
             + opponent[:, obs_opponent, obs_season]
             + b_home[:, None] * obs_home[None, :]
         ).T  # (n_obs, n_stats)
-        pm.Poisson("counts", mu=pt.exp(log_rate), observed=observed, dims=("obs", "stat"))
+        # exposure is 1 per game when rows are games, and the cell's game count
+        # when they are aggregated: a sum of n Poissons is Poisson at n times
+        # the rate.
+        pm.Poisson(
+            "counts",
+            mu=exposure[:, None] * pt.exp(log_rate),
+            observed=observed,
+            dims=("obs", "stat"),
+        )
 
         # --- availability ---
         # Each player has a durability level, and departures from it revert.
@@ -428,10 +468,11 @@ def build(data: MultiData, shared=None) -> pm.Model:
         pm_player = pm.Deterministic("pm_player", mu_pm + sigma_pm_player * z_pm, dims="player")
         b_home_pm = fixed("b_home_pm", lambda: pm.Normal("b_home_pm", 0.0, 0.2))
         sigma_pm = fixed("sigma_pm", lambda: pm.HalfNormal("sigma_pm", 1.5))
+        # A sum of n normals has n times the mean and sqrt(n) times the spread.
         pm.Normal(
             "plus_minus",
-            mu=pm_player[obs_player] + b_home_pm * obs_home,
-            sigma=sigma_pm,
+            mu=exposure * (pm_player[obs_player] + b_home_pm * obs_home),
+            sigma=sigma_pm * np.sqrt(exposure),
             observed=panel[SIGNED_STAT].to_numpy("float64"),
             dims="obs",
         )

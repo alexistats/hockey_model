@@ -62,8 +62,20 @@ class SharedParameters:
     teams: list[str]
     stats: tuple[str, ...]
     n_source_players: int
+    # Which shared terms the fitting model actually had. Reusing a file fitted
+    # with an opponent term in a model without one (or the reverse) would
+    # silently apply values estimated under different assumptions, and nothing
+    # downstream would look wrong.
+    structure: tuple[str, ...] = ()
 
-    def check_compatible(self, maps, stats: tuple[str, ...]) -> None:
+    def check_compatible(self, maps, stats: tuple[str, ...], structure=None) -> None:
+        if structure is not None and tuple(self.structure) != tuple(structure):
+            raise ValueError(
+                f"these shared parameters were fitted with terms {self.structure}, "
+                f"but this model has {tuple(structure)}. Delete shared.npz and refit "
+                f"stage one; values estimated under a different model do not carry "
+                f"over."
+            )
         if list(self.stats) != list(stats):
             raise ValueError(
                 f"shared parameters were fitted on categories {self.stats}, "
@@ -81,12 +93,16 @@ class SharedParameters:
             )
 
 
-def extract(idata, maps, stats: tuple[str, ...], n_source_players: int) -> SharedParameters:
+def extract(
+    idata, maps, stats: tuple[str, ...], n_source_players: int, structure=()
+) -> SharedParameters:
     """Posterior means of every shared value in a stage-one fit."""
     posterior: xr.Dataset = idata.posterior
     values = {}
     for name in SHARED_NAMES:
         if name not in posterior:
+            if name in ("opponent",) and name not in structure:
+                continue  # the model did not have this term
             raise KeyError(
                 f"{name!r} is not in the stage-one posterior; it was fitted with a "
                 f"different model version than this one expects"
@@ -103,6 +119,7 @@ def extract(idata, maps, stats: tuple[str, ...], n_source_players: int) -> Share
         teams=list(maps.teams),
         stats=tuple(stats),
         n_source_players=n_source_players,
+        structure=tuple(structure),
     )
 
 
@@ -113,6 +130,7 @@ def save(shared: SharedParameters, path) -> None:
         teams=np.array(shared.teams),
         stats=np.array(shared.stats),
         n_source_players=shared.n_source_players,
+        structure=np.array(shared.structure),
         **{f"v_{k}": v for k, v in shared.values.items()},
     )
 
@@ -126,4 +144,5 @@ def load(path) -> SharedParameters:
             teams=[str(t) for t in f["teams"]],
             stats=tuple(str(s) for s in f["stats"]),
             n_source_players=int(f["n_source_players"]),
+            structure=tuple(str(x) for x in f["structure"]) if "structure" in f else (),
         )

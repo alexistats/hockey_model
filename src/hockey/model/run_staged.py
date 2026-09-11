@@ -12,6 +12,7 @@ import argparse
 import logging
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from hockey.db import SessionLocal
@@ -26,6 +27,7 @@ from hockey.keepawake import keep_awake
 from hockey.model import multi, shared, staged
 from hockey.model.birthdates import player_birth_dates
 from hockey.model.run import build_schedule, choose_pool
+from hockey.progress import Progress
 from hockey.seasons import PROJECTION_SEASON, season_label
 from hockey.yahoo.settings import load_scoring_from_yaml
 
@@ -90,26 +92,43 @@ def _main(args) -> None:
             del idata
 
         # --- stage two ---
-        boards, diagnostics = [], []
-        for i, batch in enumerate(staged.batch_players(pool, args.batch), start=1):
+        boards, diagnostics, draw_blocks = [], [], []
+        batches = staged.batch_players(pool, args.batch)
+        progress = Progress(total=len(batches), label="batch", path=out / "progress.txt")
+        for i, batch in enumerate(batches, start=1):
             label = f"batch {i} ({len(batch)} players)"
             logger.info("stage two: %s", label)
             data = prepare_for(session, batch, maps, curve)
             idata = staged.fit_batch(data, params, args.draws, args.tune, args.chains)
-            board = staged.projected_board(idata, data, scoring, shared=params)
+            board, draws = staged.projected_board(idata, data, scoring, shared=params)
             boards.append(board)
+            draw_blocks.append((list(data.players), draws))
             row = staged.diagnose(idata, label)
             row["free_gb_after"] = round(staged.available_memory_gb(), 1)
             diagnostics.append(row)
-            logger.info("  %s", row)
+            progress.advance(f"r_hat {row['worst_rhat']:.4f}, {row['free_gb_after']} GB free")
             # Write after every batch, so an interrupted run still leaves a board.
             staged.stack_boards(boards).to_csv(out / "draft_board.csv", index=False)
             pd.DataFrame(diagnostics).to_csv(out / "diagnostics.csv", index=False)
+            np.savez_compressed(
+                out / f"draws_batch_{i:02d}.npz",
+                player_ids=np.array(data.players),
+                draws=draws.astype("float32"),
+            )
             del idata
 
+    progress.finish()
     full = staged.stack_boards(boards)
     full.to_csv(out / "draft_board.csv", index=False)
     diag = pd.DataFrame(diagnostics)
+
+    # Head-to-head across every batch. Batches are independent given the shared
+    # parameters, so their draws stack side by side.
+    all_ids = [pid for ids, _ in draw_blocks for pid in ids]
+    stacked = np.concatenate([d for _, d in draw_blocks], axis=1)
+    name_of = dict(zip(full["player_id"], full["player"], strict=True))
+    h2h = staged.head_to_head_from_draws(stacked, [name_of[p] for p in all_ids])
+    h2h.to_csv(out / "head_to_head.csv")
 
     print(f"\n=== {season_label(PROJECTION_SEASON)} draft board, {len(full)} skaters ===")
     print(full.drop(columns="player_id").head(40).round(1).to_string(index=False))

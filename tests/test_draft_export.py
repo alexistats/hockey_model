@@ -141,3 +141,32 @@ def test_rescoring_needs_no_refit(simple):
     assert comparison.loc["Sniper", "rank_before"] == 2
     assert comparison.loc["Sniper", "rank_change"] == 1
     assert isinstance(comparison, pd.DataFrame)
+
+
+def test_head_to_head_from_stacked_draws_matches_the_pairwise_definition():
+    """Batches are independent given the shared parameters, so their draws
+    stack side by side and P(A > B) is the same comparison it always was.
+    Chunking is an implementation detail and must not change the answer."""
+    from hockey.model.staged import head_to_head_from_draws
+
+    rng = np.random.default_rng(3)
+    draws = rng.normal(400, 80, (500, 7))
+    names = [f"p{i}" for i in range(7)]
+    matrix = head_to_head_from_draws(draws, names, chunk=3)
+    for i in range(7):
+        for j in range(7):
+            if i == j:
+                assert np.isnan(matrix.iloc[i, j])
+            else:
+                assert matrix.iloc[i, j] == pytest.approx((draws[:, i] > draws[:, j]).mean())
+
+
+def test_head_to_head_chunking_is_invisible():
+    from hockey.model.staged import head_to_head_from_draws
+
+    rng = np.random.default_rng(4)
+    draws = rng.normal(0, 1, (200, 9))
+    names = [f"p{i}" for i in range(9)]
+    one_go = head_to_head_from_draws(draws, names, chunk=9)
+    chunked = head_to_head_from_draws(draws, names, chunk=2)
+    pd.testing.assert_frame_equal(one_go, chunked)

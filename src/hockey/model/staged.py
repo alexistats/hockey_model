@@ -113,8 +113,15 @@ def summarise_comparison(comparison: pd.DataFrame) -> str:
 
 def projected_board(
     idata, data: multi.MultiData, scoring, seed: int = 7, shared=None
-) -> pd.DataFrame:
-    from hockey.export import draft_board
+) -> tuple[pd.DataFrame, np.ndarray]:
+    """The board, and the fantasy-point draws behind it.
+
+    The draws are returned rather than discarded because head-to-head needs
+    full distributions, not summaries. A first version of this kept only the
+    board, and P(A beats B) then could not be produced without refitting every
+    batch - the traces were already gone.
+    """
+    from hockey.export import draft_board, fantasy_points
 
     projection = project_multi.project(idata, data, seed=seed, shared=shared)
     board = draft_board(projection, scoring)
@@ -123,7 +130,25 @@ def projected_board(
     )
     board["exp_games"] = board["player_id"].map(expected)
     board["age"] = board["player_id"].map(dict(zip(data.players, data.ages[:, -1], strict=True)))
-    return board
+    # Columns follow projection.players order, which is what the caller needs
+    # to line draws up with player ids across batches.
+    return board, fantasy_points(projection, scoring)
+
+
+def head_to_head_from_draws(draws: np.ndarray, names: list[str], chunk: int = 200) -> pd.DataFrame:
+    """P(row finishes ahead of column) for every pair, from stacked draws.
+
+    Chunked over rows because 400 players against 3,200 draws is a 400x400x3200
+    comparison if done in one go, which is 4 GB of booleans.
+    """
+    n = draws.shape[1]
+    matrix = np.empty((n, n), dtype=float)
+    for start in range(0, n, chunk):
+        stop = min(start + chunk, n)
+        block = draws[:, start:stop, None] > draws[:, None, :]
+        matrix[start:stop] = block.mean(axis=0)
+    np.fill_diagonal(matrix, np.nan)
+    return pd.DataFrame(matrix, index=names, columns=names)
 
 
 def available_memory_gb() -> float:

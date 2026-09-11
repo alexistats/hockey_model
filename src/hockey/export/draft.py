@@ -28,6 +28,13 @@ from hockey.scoring import LeagueScoring, score_draws
 
 logger = logging.getLogger(__name__)
 
+# Floor and ceiling are the 10th and 90th percentiles of a player's projected
+# total. The 5th and 95th were used at first; 10/90 is what the draft board is
+# read against, and the calibration backtest reports the 80% central interval
+# these two bound.
+FLOOR_PCT = 10
+CEILING_PCT = 90
+
 
 def fantasy_points(
     projection: Projection, scoring: LeagueScoring, position_type: str = "P"
@@ -47,7 +54,7 @@ def draft_board(
 ) -> pd.DataFrame:
     """One row per player: the numbers a draft pick is actually made from.
 
-    `floor` and `ceiling` are the 5th and 95th percentiles. `spread` is the gap
+    `floor` and `ceiling` are the 10th and 90th percentiles. `spread` is the gap
     between them, which is the risk in the pick expressed in the same units as
     the reward - a player whose ceiling is 40 points above their floor is a
     different proposition from one whose range is 15, even at the same mean.
@@ -56,7 +63,7 @@ def draft_board(
     rows = []
     for i, player_id in enumerate(projection.players):
         draws = points[:, i]
-        floor, ceiling = np.percentile(draws, [5, 95])
+        floor, ceiling = np.percentile(draws, [FLOOR_PCT, CEILING_PCT])
         rows.append(
             {
                 "player": projection.player_names[player_id],

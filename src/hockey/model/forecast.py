@@ -119,8 +119,7 @@ def project(
 def summarize(projection: Projection, extra_totals: dict[str, np.ndarray] | None = None):
     """Mean, floor, ceiling and spread per player and stat.
 
-    Floor is the 5th percentile and ceiling the 95th, matching the definition
-    the original analysis.py used so the numbers stay comparable.
+    Floor is the 10th percentile and ceiling the 90th.
     """
     rows = []
     everything = dict(projection.totals) | (extra_totals or {})
@@ -133,8 +132,8 @@ def summarize(projection: Projection, extra_totals: dict[str, np.ndarray] | None
                     "stat": stat,
                     "games": projection.games_per_player.get(player_id, 0),
                     "mean": draws.mean(),
-                    "floor_p5": np.percentile(draws, 5),
-                    "ceiling_p95": np.percentile(draws, 95),
+                    "floor_p10": np.percentile(draws, 10),
+                    "ceiling_p90": np.percentile(draws, 90),
                     "sd": draws.std(),
                 }
             )
