@@ -65,11 +65,13 @@ STATS: tuple[str, ...] = ("goals", "assists", "sog", "hits", "blocks", "ppp", "s
 SIGNED_STAT = "plus_minus"
 
 
-def model_structure(include_opponent: bool) -> tuple[str, ...]:
+def model_structure(include_opponent: bool, include_idio: bool = False) -> tuple[str, ...]:
     """The shared terms a model carries, for fingerprinting a stage-one fit."""
     terms = ["position_means", "form_factor", "aging", "availability", "home"]
     if include_opponent:
         terms.append("opponent")
+    if include_idio:
+        terms.append("idio_walks")
     return tuple(terms)
 
 
@@ -173,7 +175,12 @@ def prepare(
     )
 
 
-def build(data: MultiData, shared=None, include_opponent: bool = True) -> pm.Model:
+def build(
+    data: MultiData,
+    shared=None,
+    include_opponent: bool = True,
+    include_idio: bool = False,
+) -> pm.Model:
     panel = data.panel
     index = data.player_index
     stats = list(data.stats)
@@ -186,7 +193,7 @@ def build(data: MultiData, shared=None, include_opponent: bool = True) -> pm.Mod
     # the frozen value when there is one and otherwise builds the prior, so
     # there is a single model definition rather than two that can drift apart.
     frozen = shared.values if shared is not None else {}
-    structure = model_structure(include_opponent)
+    structure = model_structure(include_opponent, include_idio)
     if shared is not None:
         shared.check_compatible(data.maps, tuple(stats), structure)
 
@@ -316,21 +323,34 @@ def build(data: MultiData, shared=None, include_opponent: bool = True) -> pm.Mod
         # With the anchor's own walk removed, the drift in goals *is* the
         # factor, so the goals data pins both its scale and its direction, and
         # every other category keeps its own residual movement.
-        if "sigma_idio" in frozen:
-            sigma_idio = frozen["sigma_idio"]
-        else:
-            sigma_idio_rest = pm.HalfNormal("sigma_idio_rest", sigma=0.1, shape=n_stats - 1)
-            sigma_idio = pm.Deterministic(
-                "sigma_idio", pt.concatenate([[0.0], sigma_idio_rest]), dims="stat"
-            )
-        z_idio = pm.Normal("z_idio", 0.0, 1.0, dims=("stat", "player", "walk_step"))
-        idio = pt.cumsum(
-            pt.concatenate(
-                [pt.zeros((n_stats, n_players, 1)), sigma_idio[:, None, None] * z_idio[:, :, 1:]],
+        # Off by default. These walks are 70% of a batch's latent variables -
+        # 2,520 of 3,600 at 40 players - and their fitted spreads were 0.02 to
+        # 0.1 on a log rate for every category but hits. That is a great deal
+        # of posterior dimension spent on movement the shared factor already
+        # carries, and dimension is what sets the sampler's step count: 127
+        # leapfrog steps per draw at a step size of 0.03. Whether dropping them
+        # costs accuracy is for the held-out backtest to say.
+        if include_idio:
+            if "sigma_idio" in frozen:
+                sigma_idio = frozen["sigma_idio"]
+            else:
+                sigma_idio_rest = pm.HalfNormal("sigma_idio_rest", sigma=0.1, shape=n_stats - 1)
+                sigma_idio = pm.Deterministic(
+                    "sigma_idio", pt.concatenate([[0.0], sigma_idio_rest]), dims="stat"
+                )
+            z_idio = pm.Normal("z_idio", 0.0, 1.0, dims=("stat", "player", "walk_step"))
+            idio = pt.cumsum(
+                pt.concatenate(
+                    [
+                        pt.zeros((n_stats, n_players, 1)),
+                        sigma_idio[:, None, None] * z_idio[:, :, 1:],
+                    ],
+                    axis=2,
+                ),
                 axis=2,
-            ),
-            axis=2,
-        )
+            )
+        else:
+            idio = 0.0
 
         # --- ageing ---
         # The population curve enters as the EXPECTED level at each age, not as
@@ -511,7 +531,7 @@ def build(data: MultiData, shared=None, include_opponent: bool = True) -> pm.Mod
     return model
 
 
-def sample(model, draws=1000, tune=2000, chains=4, target_accept=0.95, seed=20262027):
+def sample(model, draws=500, tune=800, chains=4, target_accept=0.9, seed=20262027):
     with model:
         return pm.sample(
             draws=draws,

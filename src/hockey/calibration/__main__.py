@@ -26,9 +26,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m hockey.calibration")
     parser.add_argument("--test-season", type=int, default=20252026)
     parser.add_argument("--pool", type=int, default=40)
-    parser.add_argument("--draws", type=int, default=1000)
-    parser.add_argument("--tune", type=int, default=1500)
+    parser.add_argument("--draws", type=int, default=500)
+    parser.add_argument("--tune", type=int, default=800)
     parser.add_argument("--chains", type=int, default=4)
+    parser.add_argument("--opponent", action="store_true", help="keep the opponent term")
+    parser.add_argument("--idio-walks", action="store_true", help="keep per-category walks")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -43,7 +45,7 @@ def _main(args) -> None:
     with SessionLocal() as session:
         data, actuals = prepare_backtest(session, args.test_season, args.pool)
 
-    model = multi.build(data)
+    model = multi.build(data, include_opponent=args.opponent, include_idio=args.idio_walks)
     idata = multi.sample(model, draws=args.draws, tune=args.tune, chains=args.chains)
 
     divergences = int(idata.sample_stats["diverging"].sum())

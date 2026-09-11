@@ -53,10 +53,21 @@ def main() -> None:
     parser.add_argument("--pool", type=int, default=400)
     parser.add_argument("--stage-one", type=int, default=120)
     parser.add_argument("--batch", type=int, default=40)
-    parser.add_argument("--draws", type=int, default=800)
-    parser.add_argument("--tune", type=int, default=1500)
+    parser.add_argument("--draws", type=int, default=500)
+    parser.add_argument("--tune", type=int, default=800)
     parser.add_argument("--chains", type=int, default=4)
     parser.add_argument("--out", default="artifacts/board_full")
+    parser.add_argument(
+        "--opponent",
+        action="store_true",
+        help="keep the per-opponent strength term. Off by default: it moves a "
+        "projection by about 2%% and blocks collapsing the likelihood 33-fold.",
+    )
+    parser.add_argument(
+        "--idio-walks",
+        action="store_true",
+        help="keep the per-category idiosyncratic walks (70%% of the latents).",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -84,7 +95,14 @@ def _main(args) -> None:
         else:
             head = pool.head(args.stage_one)
             stage_one_data = prepare_for(session, head, maps, curve)
-            idata, params = staged.fit_stage_one(stage_one_data, args.draws, args.tune, args.chains)
+            idata, params = staged.fit_stage_one(
+                stage_one_data,
+                args.draws,
+                args.tune,
+                args.chains,
+                include_opponent=args.opponent,
+                include_idio=args.idio_walks,
+            )
             shared.save(params, shared_path)
             print("\n=== stage one ===")
             print(f"  {staged.diagnose(idata, 'stage one')}")
@@ -99,7 +117,15 @@ def _main(args) -> None:
             label = f"batch {i} ({len(batch)} players)"
             logger.info("stage two: %s", label)
             data = prepare_for(session, batch, maps, curve)
-            idata = staged.fit_batch(data, params, args.draws, args.tune, args.chains)
+            idata = staged.fit_batch(
+                data,
+                params,
+                args.draws,
+                args.tune,
+                args.chains,
+                include_opponent=args.opponent,
+                include_idio=args.idio_walks,
+            )
             board, draws = staged.projected_board(idata, data, scoring, shared=params)
             boards.append(board)
             draw_blocks.append((list(data.players), draws))

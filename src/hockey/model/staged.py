@@ -34,12 +34,26 @@ class StagedResult:
     batch_diagnostics: pd.DataFrame
 
 
-def fit_stage_one(data: multi.MultiData, draws: int, tune: int, chains: int, seed: int = 1):
+def fit_stage_one(
+    data: multi.MultiData,
+    draws: int,
+    tune: int,
+    chains: int,
+    seed: int = 1,
+    include_opponent: bool = True,
+    include_idio: bool = False,
+):
     """The joint fit whose only job is the shared parameters."""
     logger.info("stage one: %d players, joint fit", len(data.players))
-    model = multi.build(data)
+    model = multi.build(data, include_opponent=include_opponent, include_idio=include_idio)
     idata = multi.sample(model, draws=draws, tune=tune, chains=chains, seed=seed)
-    params = shared.extract(idata, data.maps, tuple(data.stats), len(data.players))
+    params = shared.extract(
+        idata,
+        data.maps,
+        tuple(data.stats),
+        len(data.players),
+        structure=multi.model_structure(include_opponent, include_idio),
+    )
     return idata, params
 
 
@@ -50,9 +64,13 @@ def fit_batch(
     tune: int,
     chains: int,
     seed: int = 1,
+    include_opponent: bool = True,
+    include_idio: bool = False,
 ):
     """One batch of players, with the shared values held fixed."""
-    model = multi.build(data, shared=params)
+    model = multi.build(
+        data, shared=params, include_opponent=include_opponent, include_idio=include_idio
+    )
     return multi.sample(model, draws=draws, tune=tune, chains=chains, seed=seed)
 
 
