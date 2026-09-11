@@ -86,7 +86,15 @@ def project(
     # nobody has played is carried rather than the latent state being frozen.
     mu_player = _stack(posterior, "mu_player")[:, :, :, -1]  # (draws, stat, player)
     n_draws = mu_player.shape[0]
-    opponent = _get(posterior, "opponent", shared, n_draws)[:, :, :, -1]
+    # A lean model has no opponent term at all: neither in the posterior nor
+    # among the shared values. Its effect is then zero by construction, which
+    # is different from a staged fit that forgot to pass the shared values -
+    # the fingerprint check in shared.py catches that case before we get here.
+    has_opponent = "opponent" in posterior or (shared is not None and "opponent" in shared.values)
+    if has_opponent:
+        opponent = _get(posterior, "opponent", shared, n_draws)[:, :, :, -1]
+    else:
+        opponent = np.zeros((n_draws, len(stats), data.maps.n_teams))
     b_home = _get(posterior, "b_home", shared, n_draws)
 
     if assume_full_season:
