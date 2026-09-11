@@ -30,7 +30,12 @@ def main() -> None:
     parser.add_argument("--tune", type=int, default=800)
     parser.add_argument("--chains", type=int, default=4)
     parser.add_argument("--opponent", action="store_true", help="keep the opponent term")
-    parser.add_argument("--idio-walks", action="store_true", help="keep per-category walks")
+    parser.add_argument(
+        "--idio-walks",
+        nargs="*",
+        default=["hits"],
+        help="categories that keep their own walk (default: hits). Pass with no names for none.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -45,7 +50,7 @@ def _main(args) -> None:
     with SessionLocal() as session:
         data, actuals = prepare_backtest(session, args.test_season, args.pool)
 
-    model = multi.build(data, include_opponent=args.opponent, include_idio=args.idio_walks)
+    model = multi.build(data, include_opponent=args.opponent, include_idio=tuple(args.idio_walks))
     idata = multi.sample(model, draws=args.draws, tune=args.tune, chains=args.chains)
 
     divergences = int(idata.sample_stats["diverging"].sum())

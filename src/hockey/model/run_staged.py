@@ -65,8 +65,10 @@ def main() -> None:
     )
     parser.add_argument(
         "--idio-walks",
-        action="store_true",
-        help="keep the per-category idiosyncratic walks (70%% of the latents).",
+        nargs="*",
+        default=["hits"],
+        help="categories that keep their own walk (default: hits, the one whose walk "
+        "carries real spread). Pass with no names for none.",
     )
     args = parser.parse_args()
 
@@ -101,7 +103,7 @@ def _main(args) -> None:
                 args.tune,
                 args.chains,
                 include_opponent=args.opponent,
-                include_idio=args.idio_walks,
+                include_idio=tuple(args.idio_walks),
             )
             shared.save(params, shared_path)
             print("\n=== stage one ===")
@@ -124,7 +126,7 @@ def _main(args) -> None:
                 args.tune,
                 args.chains,
                 include_opponent=args.opponent,
-                include_idio=args.idio_walks,
+                include_idio=tuple(args.idio_walks),
             )
             board, draws = staged.projected_board(idata, data, scoring, shared=params)
             boards.append(board)

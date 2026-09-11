@@ -102,7 +102,7 @@ def extract(
     for name in SHARED_NAMES:
         if name not in posterior:
             optional = {"opponent": "opponent", "sigma_idio": "idio_walks"}
-            if name in optional and optional[name] not in structure:
+            if name in optional and not any(t.startswith(optional[name]) for t in structure):
                 continue  # the model did not have this term
             raise KeyError(
                 f"{name!r} is not in the stage-one posterior; it was fitted with a "

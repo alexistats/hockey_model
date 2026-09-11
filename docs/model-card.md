@@ -5,7 +5,7 @@ decide whether the floor and ceiling this model reports can be quoted.
 
 Held-out season: 2025-26. Pool: 39 skaters. Draws: 500 x 4 chains.
 
-Convergence: worst r_hat 1.0092, lowest bulk ESS 1265, 0 divergences.
+Convergence: worst r_hat 1.0098, lowest bulk ESS 997, 0 divergences.
 
 ```
 === calibration on held-out 2025-26 ===
@@ -17,43 +17,43 @@ Convergence: worst r_hat 1.0092, lowest bulk ESS 1265, 0 divergences.
 
   category            n     CRPS     50%     80%     90%  PIT dev
   --------------------------------------------------------------
-  goals              39      5.0    46%    79%    92%     0.29
-  assists            39      7.6    49%    74%    82%     0.44
-  sog                39     24.1    46%    82%    90%     0.28
-  hits               39     10.7    26%    59%    79%     0.64
-  blocks             39      5.3    49%    85%    97%     0.58
-  ppp                39      4.6    64%    79%    85%     0.49
-  shp                39      0.6    74%    92%    97%     0.29
-  plus_minus         39      9.7    41%    72%    85%     0.28
-  FANTASY POINTS     39     56.7    44%    79%    90%     0.34
-  games played       39      5.1    67%    90%    97%     0.33
+  goals              39      4.9    49%    85%    95%     0.18
+  assists            39      7.2    49%    82%    87%     0.34
+  sog                39     23.1    62%    82%    87%     0.39
+  hits               39     10.1    49%    82%    87%     0.19
+  blocks             39      5.2    51%    85%    95%     0.54
+  ppp                39      4.4    64%    82%    92%     0.49
+  shp                39      0.6    77%    92%    97%     0.33
+  plus_minus         39      9.7    41%    72%    85%     0.44
+  FANTASY POINTS     39     55.0    46%    77%    92%     0.29
+  games played       39      5.0    64%    90%    97%     0.33
 
 === fantasy points in detail (n=39) ===
 
-  CRPS mean            56.710   (lower is better)
-  CRPS median          41.942
-  MAE of posterior mean 80.017   (point-forecast error, for reference)
+  CRPS mean            55.026   (lower is better)
+  CRPS median          42.305
+  MAE of posterior mean 77.537   (point-forecast error, for reference)
 
   interval   nominal   actual   mean width
-  central       50%    43.6%        120.1
-  central       80%    79.5%        244.4
-  central       90%    89.7%        331.0
+  central       50%    46.2%        124.9
+  central       80%    76.9%        252.1
+  central       90%    92.3%        340.3
 
-  PIT deviation         0.338   (misshapen; 0 is perfectly flat)
+  PIT deviation         0.287   (wobbly; 0 is perfectly flat)
 ```
 
 ## Furthest from the projection
 
 ```
           player  projected  floor  ceiling  actual  error    z  inside_80
- Matthew Tkachuk      480.7  312.0    625.5   193.5 -287.2 -2.3      False
-   Evan Bouchard      363.0  243.0    467.6   534.5  171.5  1.9      False
-   Brayden Point      442.8  324.4    560.5   277.5 -165.3 -1.7      False
-     Nick Suzuki      420.8  321.0    520.0   556.0  135.2  1.6      False
- Jason Robertson      451.5  339.0    562.0   597.5  146.0  1.6      False
-  Connor McDavid      537.9  373.9    682.5   736.5  198.6  1.6      False
-Nathan MacKinnon      582.4  436.5    726.1   755.0  172.6  1.4      False
- Auston Matthews      583.0  405.0    747.6   392.0 -191.0 -1.3      False
-   Jake Guentzel      410.4  298.0    518.5   514.5  104.1  1.2       True
-  Mark Scheifele      424.5  323.4    528.6   520.5   96.0  1.1       True
+ Matthew Tkachuk      470.5  292.4    618.5   193.5 -277.0 -2.1      False
+   Brayden Point      446.5  328.5    566.5   277.5 -169.0 -1.7      False
+   Evan Bouchard      380.6  256.8    492.0   534.5  153.9  1.6      False
+ Jason Robertson      452.4  346.0    564.1   597.5  145.1  1.6      False
+     Nick Suzuki      431.7  333.0    535.6   556.0  124.3  1.5      False
+  Connor McDavid      536.0  363.9    690.1   736.5  200.5  1.5      False
+Nathan MacKinnon      583.3  428.0    730.1   755.0  171.7  1.4      False
+ Auston Matthews      586.7  394.0    757.0   392.0 -194.7 -1.3      False
+  Mark Scheifele      417.0  320.4    520.1   520.5  103.5  1.2      False
+    Matt Duchene      314.5  234.0    396.7   243.0  -71.5 -1.1       True
 ```

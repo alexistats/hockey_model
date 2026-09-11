@@ -65,13 +65,29 @@ STATS: tuple[str, ...] = ("goals", "assists", "sog", "hits", "blocks", "ppp", "s
 SIGNED_STAT = "plus_minus"
 
 
-def model_structure(include_opponent: bool, include_idio: bool = False) -> tuple[str, ...]:
+def _idio_categories(include_idio, stats) -> tuple[str, ...]:
+    """Which categories get their own walk. True means all but the anchor,
+    False means none, and a tuple names them explicitly."""
+    if include_idio is True:
+        return tuple(c for c in stats if c != stats[0])
+    if not include_idio:
+        return ()
+    unknown = set(include_idio) - set(stats)
+    if unknown:
+        raise ValueError(f"unknown categories for idiosyncratic walks: {sorted(unknown)}")
+    return tuple(c for c in stats if c in include_idio and c != stats[0])
+
+
+def model_structure(include_opponent: bool, include_idio=False) -> tuple[str, ...]:
     """The shared terms a model carries, for fingerprinting a stage-one fit."""
     terms = ["position_means", "form_factor", "aging", "availability", "home"]
     if include_opponent:
         terms.append("opponent")
-    if include_idio:
-        terms.append("idio_walks")
+    cats = (
+        include_idio if isinstance(include_idio, tuple) else _idio_categories(include_idio, STATS)
+    )
+    if cats:
+        terms.append("idio_walks:" + ",".join(cats))
     return tuple(terms)
 
 
@@ -179,7 +195,7 @@ def build(
     data: MultiData,
     shared=None,
     include_opponent: bool = True,
-    include_idio: bool = False,
+    include_idio=False,
 ) -> pm.Model:
     panel = data.panel
     index = data.player_index
@@ -193,7 +209,7 @@ def build(
     # the frozen value when there is one and otherwise builds the prior, so
     # there is a single model definition rather than two that can drift apart.
     frozen = shared.values if shared is not None else {}
-    structure = model_structure(include_opponent, include_idio)
+    structure = model_structure(include_opponent, _idio_categories(include_idio, stats))
     if shared is not None:
         shared.check_compatible(data.maps, tuple(stats), structure)
 
@@ -330,13 +346,21 @@ def build(
         # carries, and dimension is what sets the sampler's step count: 127
         # leapfrog steps per draw at a step size of 0.03. Whether dropping them
         # costs accuracy is for the held-out backtest to say.
-        if include_idio:
+        idio_categories = _idio_categories(include_idio, stats)
+        if idio_categories:
+            # A mask, so a category without its own walk contributes exactly
+            # zero rather than a tiny estimated one. Hits is the case that
+            # earns a walk: its fitted spread was 0.26 while every other
+            # category sat between 0.02 and 0.1, and dropping all of them
+            # cut the 50% coverage on hits from 51% to 26% on the held-out
+            # season.
+            mask = np.array([1.0 if c in idio_categories else 0.0 for c in stats])
             if "sigma_idio" in frozen:
                 sigma_idio = frozen["sigma_idio"]
             else:
                 sigma_idio_rest = pm.HalfNormal("sigma_idio_rest", sigma=0.1, shape=n_stats - 1)
                 sigma_idio = pm.Deterministic(
-                    "sigma_idio", pt.concatenate([[0.0], sigma_idio_rest]), dims="stat"
+                    "sigma_idio", pt.concatenate([[0.0], sigma_idio_rest]) * mask, dims="stat"
                 )
             z_idio = pm.Normal("z_idio", 0.0, 1.0, dims=("stat", "player", "walk_step"))
             idio = pt.cumsum(
