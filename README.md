@@ -60,7 +60,46 @@ refresh token keeps itself alive and none of this repeats.
 
 ```bash
 python -m hockey.model.mvp --players "Connor McDavid" "Cale Makar"
+
+# The full draft board: ~295 skaters, quota-filled per position, ~18 minutes.
+python -m hockey.model.run_staged --pool 300 --stage-one 40 --batch 50 \
+    --draws 1000 --tune 800 --chains 4 --out artifacts/board
+
+# Replacement level, value over replacement, tiers and the scarcity curve.
+python -m hockey.export artifacts/board
+
+# The single-file draft interface.
+python scripts/build_draft_ui.py artifacts/board
 ```
+
+## On a second machine
+
+Three things the clone does not carry, in the order they cost time.
+
+**The warehouse.** The database lives in a Docker volume, not in git. Running
+`python -m hockey.ingest backfill` from scratch is several hours of polite API
+calls. Copying it across is minutes, and compresses to about 4 MB:
+
+```bash
+# on the machine that has it
+docker compose exec -T db pg_dump -U hockey hockey_models | gzip > hockey.sql.gz
+
+# on the new one: bring Postgres up, then restore into the empty database
+docker compose up -d
+gunzip -c hockey.sql.gz | docker compose exec -T db psql -U hockey hockey_models
+```
+
+Restore *instead of* `alembic upgrade head`, not after it. The dump carries the
+schema and the `alembic_version` row with it, so migrating first leaves tables
+for the restore to collide with. Run `alembic upgrade head` afterwards only to
+confirm it reports nothing to do.
+
+**`.env`.** Copy it by hand; it is gitignored because it holds the Yahoo client
+secret. `.env.example` lists every key it needs.
+
+**A fitted board.** `artifacts/board_*/` holds the posterior draws, roughly
+15 MB per run. Copy the directory to skip a refit, or just rerun the board -
+it is under 20 minutes.
 
 ## Development
 
