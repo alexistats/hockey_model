@@ -25,6 +25,14 @@ from hockey.yahoo.settings import load_roster_from_yaml, load_scoring_from_yaml
 TEMPLATE = Path("ui/draft_room.html")
 N_TEAMS = 14
 
+# Where I pick, and whether the order reverses each round. From these the page
+# works out how many picks separate my turns, which is not one number: in a
+# snake it alternates. At slot 8 of 14 the gaps run 13, 15, 13, 15 - so a fixed
+# "two rounds" is wrong in both directions, and wrong by more the nearer the
+# slot is to either end.
+DRAFT_SLOT = 8
+SNAKE = True
+
 # Enough draws for a head-to-head probability to be stable to about a point,
 # and small enough that the packed array stays under a megabyte.
 UI_DRAWS = 1000
@@ -49,20 +57,41 @@ def scoring_weights() -> dict[str, float]:
     return {rule.key: rule.modifier for rule in scoring.skater_rules}
 
 
-def load_draws(out: Path, ids: list[int], rng) -> np.ndarray:
-    """Fantasy-point draws for `ids`, subsampled, in that order."""
-    columns: dict[int, np.ndarray] = {}
+def load_draws(out: Path, ids: list[int], rng, arrays: tuple[str, ...] = ("draws",)):
+    """Posterior draws for `ids`, subsampled, in that order - one array each.
+
+    Every array is subsampled on the *same* draw indices. Within a batch those
+    indices are the same posterior sample, so a player's goals, shots and games
+    played all come from one coherent season rather than three unrelated ones.
+    Comparing a pair on several categories at once is only honest if they do.
+    """
+    columns: dict[str, dict[int, np.ndarray]] = {name: {} for name in arrays}
     for path in sorted(out.glob("draws_batch_*.npz")):
         with np.load(path) as f:
+            for name in arrays:
+                if name not in f:
+                    raise SystemExit(
+                        f"{path.name} has no '{name}'; this board predates per-category "
+                        f"draws and the comparison panel cannot be built from it"
+                    )
             for k, pid in enumerate(f["player_ids"]):
-                columns[int(pid)] = f["draws"][:, k]
-    missing = [p for p in ids if p not in columns]
+                for name in arrays:
+                    columns[name][int(pid)] = f[name][:, k]
+    missing = [p for p in ids if p not in columns["draws"]]
     if missing:
         raise SystemExit(f"no saved draws for {len(missing)} player(s), first {missing[:3]}")
-    total = len(next(iter(columns.values())))
+    total = len(next(iter(columns["draws"].values())))
     take = rng.choice(total, size=min(UI_DRAWS, total), replace=False)
     take.sort()
-    return np.column_stack([columns[p][take] for p in ids])
+    return tuple(np.column_stack([columns[name][p][take] for p in ids]) for name in arrays)
+
+
+def pack(values: np.ndarray, what: str) -> str:
+    """Round to int16 and base64 the column-major bytes, as the page expects."""
+    packed = np.rint(values).astype("<i2")
+    if not (-32768 < packed.min() and packed.max() < 32767):
+        raise SystemExit(f"{what} overflows int16; widen the packing")
+    return base64.b64encode(packed.T.tobytes()).decode("ascii")
 
 
 def main() -> None:
@@ -78,13 +107,21 @@ def main() -> None:
     rng = np.random.default_rng(11)
 
     ids = [int(p) for p in board["player_id"]]
-    draws = load_draws(out, ids, rng)
+    # The categories and games played travel too, so the comparison panel can
+    # answer "is his shot volume actually higher" from the posterior rather than
+    # from two point estimates that cannot say how often it is true.
+    wanted = ("draws", "games_played", *(f"stat_{k}" for k in ORDER))
+    loaded = load_draws(out, ids, rng, wanted)
+    by_name = dict(zip(wanted, loaded, strict=True))
+
+    draws = by_name["draws"]
     # int16 holds every plausible fantasy total and halves what the page carries.
-    packed = np.rint(draws).astype("<i2")
-    if not (-32768 < packed.min() and packed.max() < 32767):
-        raise SystemExit("fantasy totals overflow int16; widen the packing")
     # Column-major: each player's draws contiguous, which is what the page slices.
-    blob = base64.b64encode(packed.T.tobytes()).decode("ascii")
+    blob = pack(draws, "fantasy totals")
+    games_blob = pack(by_name["games_played"], "games played")
+    # One array per category, concatenated in ORDER, so the page finds a
+    # player's category draws at ((category * nPlayers) + player) * nDraws.
+    cat_blob = pack(np.concatenate([by_name[f"stat_{k}"] for k in ORDER], axis=1), "categories")
 
     players = []
     for n, row in enumerate(board.itertuples()):
@@ -136,11 +173,16 @@ def main() -> None:
         "slots": {p: slots[p] for p in positions},
         "rosterShape": shape,
         "bench": bench,
+        "nTeams": N_TEAMS,
+        "draftSlot": DRAFT_SLOT,
+        "snake": SNAKE,
         "cats": list(ORDER),
         "catLabels": LABELS,
         "weights": weights,
-        "nDraws": packed.shape[0],
+        "nDraws": draws.shape[0],
         "draws": blob,
+        "catDraws": cat_blob,
+        "gamesDraws": games_blob,
         "players": players,
         "footnote": (
             f"<b>How to read this.</b> Every number is a posterior from a hierarchical "
@@ -171,7 +213,7 @@ def main() -> None:
     destination.write_text(page, encoding="utf-8")
     print(
         f"wrote {destination} ({len(page) / 1e6:.2f} MB) "
-        f"with {len(players)} players and {packed.shape[0]} draws each"
+        f"with {len(players)} players and {draws.shape[0]} draws each"
     )
 
 

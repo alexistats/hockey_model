@@ -174,6 +174,43 @@ table.grid col.dim { background: var(--well); }
 .verdict b { color: var(--ink); font-weight: 600; }
 .verdict .take { color: var(--line); font-weight: 700; font-stretch: 62%; letter-spacing: .03em; }
 
+/* ---- compare ---- */
+.cmp-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 13px; }
+.cmp-head h2 { margin: 0 8px 0 0; font-size: 10.5px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--faint); }
+.chip-p {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  border: 1px solid var(--edge); border-radius: 999px; padding: 3px 5px 3px 10px;
+  border-left: 3px solid var(--sw);
+}
+.chip-p.ref { background: var(--line-wash); border-color: var(--line); }
+.chip-p .tag { font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+.chip-p button { font: inherit; line-height: 1; border: 0; background: none; color: var(--faint); cursor: pointer; padding: 0 3px; }
+.chip-p button:hover { color: var(--red); }
+.cmp-hint { font-size: 11.5px; color: var(--faint); }
+
+.cmp-body { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+@media (max-width: 1040px) { .cmp-body { grid-template-columns: 1fr; } }
+.cmp-body h3 {
+  margin: 0 0 8px; font-size: 10.5px; font-weight: 600; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--faint);
+}
+.cmp-sub { margin: 16px 0 8px; }
+.overlay { width: 100%; height: 132px; display: block; overflow: visible; }
+
+table.cmp { border-collapse: collapse; width: 100%; }
+table.cmp th, table.cmp td { padding: 4px 6px; font-size: 12px; font-family: var(--mono); text-align: right; white-space: nowrap; }
+table.cmp thead th { font-family: var(--sans); font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); font-weight: 600; }
+table.cmp th.lead, table.cmp td.lead { text-align: left; font-family: var(--sans); }
+table.cmp tbody tr + tr td, table.cmp tbody tr + tr th { border-top: 1px solid var(--edge-soft); }
+table.cmp .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; background: var(--sw); }
+table.cmp td.p { color: var(--slate); }
+table.cmp td.p.win { color: var(--ink); font-weight: 600; }
+table.cmp td.ref { color: var(--faint); }
+table.cmp caption { caption-side: bottom; text-align: left; font-family: var(--sans); font-size: 10.5px; color: var(--faint); padding-top: 7px; line-height: 1.5; }
+
+.mbar { display: inline-block; vertical-align: middle; width: 54px; height: 6px; background: var(--well); border-radius: 3px; overflow: hidden; margin-right: 7px; }
+.mbar i { display: block; height: 100%; background: var(--sw); }
+
 /* ---- controls ---- */
 .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 input[type="search"], select, .btn {
@@ -267,6 +304,7 @@ thead th.rangehead { padding-bottom: 2px; vertical-align: bottom; }
 .mini.on { background: var(--green); border-color: var(--green); color: var(--on-accent); }
 .mini.gone-on { background: var(--red); border-color: var(--red); color: var(--on-accent); }
 .mini.took-on { background: var(--line); border-color: var(--line); color: var(--on-accent); }
+.mini.cmp-on { background: var(--line-bright); border-color: var(--line-bright); color: var(--on-accent); }
 
 /* ---- rail ---- */
 .rail { display: flex; flex-direction: column; gap: 14px; position: sticky; top: 14px; }
@@ -346,8 +384,9 @@ footer b { color: var(--slate); font-weight: 600; }
         <button data-mode="vorp" aria-pressed="false">Value bands</button>
       </div>
       <div class="runs" id="runs"></div>
-      <label class="waitset">Picks until my turn
-        <input type="number" id="waitpicks" min="1" max="60" step="1" value="26">
+      <label class="waitset">I pick
+        <input type="number" id="draftslot" min="1" step="1" value="8">
+        <span id="slotline"></span>
       </label>
     </div>
     <div class="shape-body">
@@ -358,6 +397,8 @@ footer b { color: var(--slate); font-weight: 600; }
       </div>
     </div>
   </section>
+
+  <section class="shape compare" id="compare" hidden aria-label="Compare players"></section>
 
   <div class="controls">
     <input type="search" id="q" placeholder="Search a player" aria-label="Search a player">
@@ -430,11 +471,55 @@ footer b { color: var(--slate); font-weight: 600; }
 
   // Draws arrive as one int16 block, players down the columns, so any
   // head-to-head is a pass over two slices rather than a stored 300x300 matrix.
-  const raw = atob(DATA.draws);
-  const bytes = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-  const DRAWS = new Int16Array(bytes.buffer);
+  const decode = (b64) => {
+    const raw = atob(b64);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    return new Int16Array(bytes.buffer);
+  };
+  const DRAWS = decode(DATA.draws);
   const col = (i) => DRAWS.subarray(i * NDRAWS, (i + 1) * NDRAWS);
+
+  // The same draw indices were taken for every array, so draw k of a player's
+  // goals and draw k of their shots are one season, not two. Comparing a pair
+  // across several categories is only meaningful because of that.
+  const CAT_DRAWS = decode(DATA.catDraws);
+  const catCol = (c, i) => {
+    const at = (c * P.length + i) * NDRAWS;
+    return CAT_DRAWS.subarray(at, at + NDRAWS);
+  };
+  const GAMES_DRAWS = decode(DATA.gamesDraws);
+  const gamesCol = (i) => GAMES_DRAWS.subarray(i * NDRAWS, (i + 1) * NDRAWS);
+
+  // P(a > b) over paired draws. Ties are split, because two integer category
+  // totals land on the same number often enough that counting them as a loss
+  // would bias every comparison downward - badly so for shorthanded points,
+  // where most seasons are zero or one.
+  function probBeats(x, y) {
+    let w = 0, t = 0;
+    for (let k = 0; k < NDRAWS; k++) {
+      if (x[k] > y[k]) w++;
+      else if (x[k] === y[k]) t++;
+    }
+    return (w + t / 2) / NDRAWS;
+  }
+
+  const quantile = (sorted, q) => {
+    const at = (sorted.length - 1) * q;
+    const lo = Math.floor(at), hi = Math.ceil(at);
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (at - lo);
+  };
+  const summarize = (arr) => {
+    const s = Float64Array.from(arr).sort();
+    const mean = s.reduce((a, b) => a + b, 0) / s.length;
+    let v = 0;
+    for (const x of s) v += (x - mean) * (x - mean);
+    return {
+      mean, sd: Math.sqrt(v / s.length),
+      f: quantile(s, 0.10), l: quantile(s, 0.20),
+      med: quantile(s, 0.50), h: quantile(s, 0.80), c: quantile(s, 0.90),
+    };
+  };
 
   // The runtime is absent when this file is opened straight off disk, so every
   // capability is asked for through here and the page works without any of them.
@@ -443,12 +528,7 @@ footer b { color: var(--slate); font-weight: 600; }
       ? claude.use(name).catch(() => null)
       : Promise.resolve(null);
 
-  const beats = (a, b) => {
-    const x = col(a), y = col(b);
-    let w = 0;
-    for (let k = 0; k < NDRAWS; k++) if (x[k] > y[k]) w++;
-    return w / NDRAWS;
-  };
+  const beats = (a, b) => probBeats(col(a), col(b));
 
   const POSITIONS = DATA.positions;
   const state = {
@@ -457,8 +537,34 @@ footer b { color: var(--slate); font-weight: 600; }
     gone: new Set(), mine: [],
     // `order` is `gone` in pick sequence, which is the only way to see a run:
     // a set says six defencemen are off the board, not that they went in a row.
-    order: [], roster: [], shapeMode: "tier", waitPicks: 26,
+    order: [], roster: [], compare: [], shapeMode: "tier", slot: DATA.draftSlot || 1,
   };
+
+  /* ---------- where my turns fall ---------- */
+  // Overall pick number of my `r`-th round, counting rounds from 1. In a snake
+  // the even rounds run backwards, so a slot near an end waits a long time then
+  // picks twice almost together, and a slot in the middle waits evenly. That
+  // difference is the whole reason to compute this rather than type a number.
+  function myPick(round) {
+    const n = DATA.nTeams;
+    const inRound = DATA.snake && round % 2 === 0 ? n + 1 - state.slot : state.slot;
+    return (round - 1) * n + inRound;
+  }
+
+  // How many picks by other managers separate the selection I am making now
+  // from my next one. When it is my turn that is the gap between this pick and
+  // my following pick; when it is not, it is what is left before my turn comes.
+  function picksUntilTurn() {
+    const made = state.order.length;
+    const current = made + 1;
+    const rounds = Math.ceil((P.length + DATA.nTeams) / DATA.nTeams);
+    const mine = [];
+    for (let r = 1; r <= rounds; r++) mine.push(myPick(r));
+    const ahead = mine.filter((p) => p >= current);
+    if (!ahead.length) return DATA.nTeams;
+    if (ahead[0] === current) return ahead.length > 1 ? ahead[1] - ahead[0] - 1 : DATA.nTeams;
+    return ahead[0] - current;
+  }
 
   // Marking someone drafted is one gesture with two meanings - by anyone, or by
   // me - and they have to stay consistent, so both go through here.
@@ -549,6 +655,7 @@ footer b { color: var(--slate); font-weight: 600; }
     const list = visible();
     const mine = new Set(state.mine);
     const took = new Set(state.roster);
+    const cmp = new Set(state.compare);
     tbody.innerHTML = list.map((p, n) => {
       const gone = state.gone.has(p.i);
       const tierClass = p.tier === 1 ? "chip t1" : p.tier === 2 ? "chip t2" : "chip";
@@ -570,6 +677,7 @@ footer b { color: var(--slate); font-weight: 600; }
         <td class="vorp ${p.vorp < 0 ? "neg" : ""}">${signed(p.vorp)}</td>
         <td class="dim">${fmt0(p.g)}</td>
         <td class="acts">
+          <button class="mini ${cmp.has(p.i) ? "cmp-on" : ""}" data-act="cmp" title="Compare">⇄</button>
           <button class="mini ${mine.has(p.i) ? "on" : ""}" data-act="mine" title="Add to my list">★</button>
           <button class="mini ${took.has(p.i) ? "took-on" : ""}" data-act="took" title="I drafted this player">+</button>
           <button class="mini ${gone ? "gone-on" : ""}" data-act="gone" title="Someone else drafted this player">✕</button>
@@ -643,7 +751,7 @@ footer b { color: var(--slate); font-weight: 600; }
     return { filled, need: out };
   }
 
-  // What a position costs me if I pass on it now. The next `waitPicks` picks are
+  // What a position costs me if I pass on it now. The next `picks` picks are
   // assumed to come off the top of the value board, which is the assumption the
   // room mostly behaves like and the only one available without knowing the
   // other managers. It is stated on the page for that reason.
@@ -693,7 +801,14 @@ footer b { color: var(--slate); font-weight: 600; }
   function drawShape() {
     const positions = SHAPE();
     const { filled, need } = myNeeds();
-    const cost = costOfWaiting(state.waitPicks);
+    const wait = picksUntilTurn();
+    const cost = costOfWaiting(wait);
+
+    const made = state.order.length;
+    const mine = made + 1 === myPick(Math.floor(made / DATA.nTeams) + 1);
+    document.getElementById("slotline").textContent =
+      `of ${DATA.nTeams}${DATA.snake ? ", snake" : ""} · ` +
+      (mine ? `on the clock, then ${wait} picks` : `${wait} picks until my turn`);
 
     /* the grid */
     const rows = bands().map((b) => {
@@ -780,11 +895,176 @@ footer b { color: var(--slate); font-weight: 600; }
            ${fmt0(cost[first].cost)} points of value and <span class="take">${second}</span>
            about ${fmt0(cost[second].cost)} — close enough that either is defensible.
            Take the better player.`
-        : `<b>Take a <span class="take">${first}</span>.</b> Waiting ${state.waitPicks} picks
+        : `<b>Take a <span class="take">${first}</span>.</b> Waiting ${wait} picks
            costs about ${fmt0(cost[first].cost)} points of value there${
              second ? `, against ${fmt0(cost[second].cost)} at ${second}` : ""}.
            ${DATA.rosterShape.G ? "Goalies are not on this board." : ""}`;
     }
+  }
+
+  /* ---------- compare ---------- */
+  // The board ranks. This answers the question ranking cannot: two players are
+  // 30 points apart, so how often does the gap actually go the other way? Every
+  // number here is counted off the posterior draws the page already carries, so
+  // it costs a pass over a few arrays and no round trip.
+
+  // Distinguishable in both themes and for the common colour deficiencies; the
+  // first is the blue the rest of the page already uses for the reference.
+  const SWATCH = ["#2f6fd0", "#d97706", "#0f9d76", "#c2410c", "#7c3aed"];
+  const MAX_COMPARE = 5;
+
+  function densityPath(values, lo, hi, w, h) {
+    // A histogram smoothed by a three-point pass, which is enough to read an
+    // overlap by eye without pretending to a kernel estimate the draws do not
+    // support at this resolution.
+    const BINS = 48;
+    const counts = new Array(BINS).fill(0);
+    for (const v of values) {
+      const k = Math.floor(((v - lo) / (hi - lo)) * BINS);
+      if (k >= 0 && k < BINS) counts[k]++;
+    }
+    const smooth = counts.map((_, k) =>
+      (counts[k - 1] || 0) * 0.25 + counts[k] * 0.5 + (counts[k + 1] || 0) * 0.25);
+    const peak = Math.max(...smooth, 1);
+    const pts = smooth.map((c, k) => {
+      const x = ((k + 0.5) / BINS) * w;
+      return `${x.toFixed(1)},${(h - (c / peak) * h).toFixed(1)}`;
+    });
+    return { line: `M0,${h} L${pts.join(" L")} L${w},${h}`, peak };
+  }
+
+  function drawCompare() {
+    const el = document.getElementById("compare");
+    const picked = state.compare.filter((i) => P[i]);
+    if (picked.length < 2) {
+      el.hidden = true;
+      return;
+    }
+    el.hidden = false;
+    const ref = picked[0];
+    const colour = (n) => SWATCH[n % SWATCH.length];
+    const stats = picked.map((i) => summarize(col(i)));
+
+    /* the chips */
+    const chips = picked.map((i, n) => `
+      <span class="chip-p ${n === 0 ? "ref" : ""}" style="--sw:${colour(n)}">
+        ${P[i].n}<span class="tag">${P[i].p}${n === 0 ? " · ref" : ""}</span>
+        <button data-drop="${i}" title="Remove">×</button>
+      </span>`).join("");
+
+    /* the overlay */
+    const lo = Math.min(...stats.map((s) => s.f)) - 30;
+    const hi = Math.max(...stats.map((s) => s.c)) + 30;
+    const W = 560, H = 108;
+    const curves = picked.map((i, n) => {
+      const { line } = densityPath(col(i), lo, hi, W, H);
+      const mx = ((stats[n].mean - lo) / (hi - lo)) * W;
+      return `<path d="${line}" fill="${colour(n)}" fill-opacity=".13" stroke="${colour(n)}"
+                    stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+              <line x1="${mx.toFixed(1)}" y1="${H}" x2="${mx.toFixed(1)}" y2="6"
+                    stroke="${colour(n)}" stroke-width="1" stroke-dasharray="3 3"
+                    vector-effect="non-scaling-stroke"/>`;
+    }).join("");
+    const axis = [0, 0.25, 0.5, 0.75, 1].map((f) => {
+      const v = lo + (hi - lo) * f;
+      return `<text x="${(f * W).toFixed(0)}" y="${H + 15}" fill="var(--faint)" font-size="10"
+                    text-anchor="${f === 0 ? "start" : f === 1 ? "end" : "middle"}"
+                    font-family="var(--mono)">${Math.round(v)}</text>`;
+    }).join("");
+
+    /* season totals, and how often each beats the reference */
+    const totalRows = picked.map((i, n) => {
+      const s = stats[n];
+      const p = n === 0 ? null : probBeats(col(i), col(ref));
+      return `<tr>
+        <td class="lead"><span class="sw" style="--sw:${colour(n)}"></span>${P[i].n}</td>
+        <td>${fmt0(s.f)}</td><td>${fmt0(s.med)}</td><td>${fmt0(s.c)}</td>
+        <td>${fmt0(s.c - s.f)}</td>
+        <td class="${p === null ? "ref" : "p" + (p > 0.5 ? " win" : "")}">${
+          p === null ? "reference" : Math.round(p * 100) + "%"}</td>
+      </tr>`;
+    }).join("");
+
+    /* every scoring category, same question */
+    const catRows = CATS.map((c, ci) => {
+      const cells = picked.map((i, n) => {
+        const mean = P[i].cat[c][0];
+        const p = n === 0 ? null : probBeats(catCol(ci, i), catCol(ci, ref));
+        return `<td>${mean.toFixed(1)}</td><td class="${
+          p === null ? "ref" : "p" + (p > 0.5 ? " win" : "")}">${
+          p === null ? "—" : Math.round(p * 100) + "%"}</td>`;
+      }).join("");
+      const w = DATA.weights[c] || 0;
+      return `<tr><th class="lead">${DATA.catLabels[c]}<br>
+        <span style="color:var(--faint);font-size:10px">${w > 0 ? "+" : ""}${w} each</span></th>${cells}</tr>`;
+    }).join("");
+    const catHead = picked.map((i, n) =>
+      `<th colspan="2"><span class="sw" style="--sw:${colour(n)}"></span>${
+        P[i].n.split(" ").slice(-1)[0]}</th>`).join("");
+    const catSub = picked.map((_, n) =>
+      `<th>proj</th><th>${n === 0 ? "" : "P(&gt;ref)"}</th>`).join("");
+
+    /* availability and what the board says a pick is worth */
+    const fullish = Math.round(DATA.gamesInSeason * 0.85);
+    const ctxRows = picked.map((i, n) => {
+      const g = gamesCol(i);
+      let healthy = 0;
+      for (let k = 0; k < NDRAWS; k++) if (g[k] >= fullish) healthy++;
+      const p = P[i];
+      return `<tr>
+        <td class="lead"><span class="sw" style="--sw:${colour(n)}"></span>${p.n}</td>
+        <td>${p.a}</td>
+        <td>${fmt0(p.g)}</td>
+        <td><span class="mbar" style="--sw:${colour(n)}"><i style="width:${
+          ((healthy / NDRAWS) * 100).toFixed(0)}%"></i></span>${Math.round((healthy / NDRAWS) * 100)}%</td>
+        <td>${p.p}${p.tier || "—"}</td>
+        <td>${signed(p.vorp)}</td>
+      </tr>`;
+    }).join("");
+
+    el.innerHTML = `
+      <div class="cmp-head">
+        <h2>Compare</h2>${chips}
+        <span class="cmp-hint">Probabilities are against ${P[ref].n}. Click a name's ⇄ to add or drop.</span>
+      </div>
+      <div class="cmp-body">
+        <div>
+          <h3>Season fantasy points</h3>
+          <svg class="overlay" viewBox="0 0 ${W} ${H + 20}" preserveAspectRatio="none"
+               role="img" aria-label="Overlaid posterior distributions">
+            ${curves}${axis}
+          </svg>
+          <table class="cmp">
+            <thead><tr><th class="lead">Player</th><th>Floor</th><th>Median</th>
+              <th>Ceiling</th><th>Spread</th><th>Beats ref</th></tr></thead>
+            <tbody>${totalRows}</tbody>
+            <caption>Floor and ceiling are the 10th and 90th percentiles.
+              <b>Beats ref</b> counts the draws where that player outscores
+              ${P[ref].n} over a whole season.</caption>
+          </table>
+
+          <h3 class="cmp-sub">Age, availability and what the pick is worth</h3>
+          <table class="cmp">
+            <thead><tr><th class="lead">Player</th><th>Age</th><th>Games</th>
+              <th>P(${fullish}+ games)</th><th>Tier</th><th>Value</th></tr></thead>
+            <tbody>${ctxRows}</tbody>
+            <caption>Aging is already inside every projection above, as the drift of each
+              player's random walk - it is not a separate subtraction, so there is no
+              before-and-after to show. Tier and value are live: both move as the board empties.</caption>
+          </table>
+        </div>
+        <div>
+          <h3>Each scoring category</h3>
+          <table class="cmp">
+            <thead><tr><th class="lead" rowspan="2">Category</th>${catHead}</tr>
+              <tr>${catSub}</tr></thead>
+            <tbody>${catRows}</tbody>
+            <caption>Category draws are paired with the point totals above - draw by draw,
+              it is one season, so a player who scores by volume and one who scores by rate
+              are compared on the seasons they would actually have.</caption>
+          </table>
+        </div>
+      </div>`;
   }
 
   /* ---------- detail rail ---------- */
@@ -886,6 +1166,7 @@ footer b { color: var(--slate); font-weight: 600; }
     drawRows();
     drawStrip();
     drawShape();
+    drawCompare();
     drawDetail();
     drawMyList();
   }
@@ -901,6 +1182,11 @@ footer b { color: var(--slate); font-weight: 600; }
       save();
     } else if (act === "took") {
       setGone(i, !state.roster.includes(i), true);
+      save();
+    } else if (act === "cmp") {
+      const at = state.compare.indexOf(i);
+      if (at >= 0) state.compare.splice(at, 1);
+      else if (state.compare.length < MAX_COMPARE) state.compare.push(i);
       save();
     } else if (act === "mine") {
       const at = state.mine.indexOf(i);
@@ -936,6 +1222,15 @@ footer b { color: var(--slate); font-weight: 600; }
     render();
   });
 
+  document.getElementById("compare").addEventListener("click", (e) => {
+    const drop = e.target.closest("[data-drop]");
+    if (!drop) return;
+    const at = state.compare.indexOf(Number(drop.dataset.drop));
+    if (at >= 0) state.compare.splice(at, 1);
+    save();
+    render();
+  });
+
   document.getElementById("shapemode").addEventListener("click", (e) => {
     const b = e.target.closest("button");
     if (!b) return;
@@ -946,10 +1241,10 @@ footer b { color: var(--slate); font-weight: 600; }
     drawShape();
   });
 
-  document.getElementById("waitpicks").addEventListener("input", (e) => {
+  document.getElementById("draftslot").addEventListener("input", (e) => {
     const n = Number(e.target.value);
-    if (!Number.isFinite(n) || n < 1) return;
-    state.waitPicks = Math.min(60, Math.round(n));
+    if (!Number.isFinite(n) || n < 1 || n > DATA.nTeams) return;
+    state.slot = Math.round(n);
     save();
     drawShape();
   });
@@ -1043,7 +1338,7 @@ footer b { color: var(--slate); font-weight: 600; }
   function save() {
     const payload = {
       gone: [...state.gone], mine: state.mine, order: state.order, roster: state.roster,
-      shapeMode: state.shapeMode, waitPicks: state.waitPicks, at: Date.now(),
+      compare: state.compare, shapeMode: state.shapeMode, slot: state.slot, at: Date.now(),
     };
     try { localStorage.setItem("bluelinedraft", JSON.stringify(payload)); } catch {}
     if (!store) return;
@@ -1067,8 +1362,9 @@ footer b { color: var(--slate); font-weight: 600; }
     const saved = (payload.order || []).filter((i) => state.gone.has(i));
     state.order = saved.length === state.gone.size ? saved : [];
     if (payload.shapeMode === "tier" || payload.shapeMode === "vorp") state.shapeMode = payload.shapeMode;
-    if (Number.isFinite(payload.waitPicks)) state.waitPicks = payload.waitPicks;
-    document.getElementById("waitpicks").value = state.waitPicks;
+    state.compare = (payload.compare || []).filter((i) => P[i]).slice(0, MAX_COMPARE);
+    if (Number.isFinite(payload.slot)) state.slot = payload.slot;
+    document.getElementById("draftslot").value = state.slot;
     document.querySelectorAll("#shapemode button").forEach((x) =>
       x.setAttribute("aria-pressed", String(x.dataset.mode === state.shapeMode)));
   }
