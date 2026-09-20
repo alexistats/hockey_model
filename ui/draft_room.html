@@ -838,10 +838,17 @@ footer b { color: var(--slate); font-weight: 600; }
   function bands() {
     const live = P.filter((p) => !state.gone.has(p.i));
     if (state.shapeMode === "tier") {
-      const cap = 6;
+      // Every tier the model actually struck, not a capped six with the rest
+      // swept into a remainder. The breaks run to twelve at defence and left
+      // wing and eleven at centre, so a cap of six collapsed half the board
+      // into one row - and it collapsed the deep half, which is the part still
+      // on the table in the later rounds when this panel is the only thing
+      // telling them apart.
+      const deepest = P.reduce((m, p) => Math.max(m, p.tier || 0), 0);
       const rows = [];
-      for (let t = 1; t <= cap; t++) rows.push({ key: `t${t}`, label: `Tier ${t}`, test: (p) => p.tier === t });
-      rows.push({ key: "rest", label: `Tier ${cap + 1}+`, test: (p) => p.tier > cap, remainder: true });
+      for (let t = 1; t <= deepest; t++) {
+        rows.push({ key: `t${t}`, label: `Tier ${t}`, test: (p) => p.tier === t, keep: true });
+      }
       return rows;
     }
     // Value bands are the honest cross-position read: a tier 4 defenceman and a
@@ -882,7 +889,10 @@ footer b { color: var(--slate); font-weight: 600; }
       const lo = present.length ? Math.min(...present) : 0;
       const hi = Math.max(...counts, 0);
       const total = counts.reduce((s, n) => s + n, 0);
-      if (!total) return "";
+      // A tier emptied by the draft reads 0 rather than vanishing: the row
+      // going quiet is the signal, and a table that reflows as bands disappear
+      // is harder to read across a pick than one that stays put.
+      if (!total && !b.keep) return "";
       const cells = counts.map((n) => {
         const cls = [
           "n",
