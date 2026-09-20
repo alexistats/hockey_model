@@ -15,6 +15,8 @@ temporary directory, and the process exits as soon as the code arrives.
 
 import http.server
 import logging
+import os
+import shutil
 import socket
 import ssl
 import subprocess
@@ -47,6 +49,53 @@ class CallbackError(RuntimeError):
     """The redirect arrived without a usable authorization code."""
 
 
+def find_openssl() -> str:
+    """The openssl executable, hunted rather than assumed.
+
+    Git for Windows ships one, but only Git Bash puts it on PATH - from
+    PowerShell or cmd the bare name fails with a WinError 2 that names no file,
+    which is a poor way to learn that a certificate could not be made. So look
+    on PATH first, then in the places Git installs it, then alongside git
+    itself if it landed somewhere unusual.
+    """
+    found = shutil.which("openssl")
+    if found:
+        return found
+
+    candidates = [
+        Path(base) / sub / "bin" / "openssl.exe"
+        for base in (
+            os.environ.get("ProgramFiles", r"C:\Program Files"),
+            os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+            os.environ.get("LOCALAPPDATA", ""),
+        )
+        if base
+        for sub in ("Git/usr", "Git/mingw64", "Programs/Git/usr", "Programs/Git/mingw64")
+    ]
+    git = shutil.which("git")
+    if git:
+        # .../Git/cmd/git.exe -> .../Git/usr/bin/openssl.exe
+        root = Path(git).parent.parent
+        candidates += [
+            root / "usr" / "bin" / "openssl.exe",
+            root / "mingw64" / "bin" / "openssl.exe",
+        ]
+
+    for path in candidates:
+        if path.is_file():
+            logger.debug("using openssl at %s", path)
+            return str(path)
+
+    raise CallbackError(
+        "No openssl executable found, so the local HTTPS listener cannot be given a "
+        "certificate. Git for Windows ships one, but only Git Bash puts it on PATH.\n\n"
+        "Either run this from Git Bash, or authorize without the listener:\n\n"
+        "    python -m hockey.yahoo auth-url\n\n"
+        "which prints a URL to open, then hand the code back with "
+        "`python -m hockey.yahoo exchange <code>` within about a minute."
+    )
+
+
 def make_self_signed_cert(directory: Path) -> tuple[Path, Path]:
     """A localhost certificate, via the openssl that ships with Git for Windows.
 
@@ -56,9 +105,9 @@ def make_self_signed_cert(directory: Path) -> tuple[Path, Path]:
     """
     key = directory / "key.pem"
     cert = directory / "cert.pem"
-    subprocess.run(
+    result = subprocess.run(
         [
-            "openssl",
+            find_openssl(),
             "req",
             "-x509",
             "-newkey",
@@ -75,9 +124,17 @@ def make_self_signed_cert(directory: Path) -> tuple[Path, Path]:
             "-addext",
             "subjectAltName=DNS:localhost,IP:127.0.0.1",
         ],
-        check=True,
+        check=False,
         capture_output=True,
+        text=True,
     )
+    if result.returncode != 0 or not cert.is_file() or not key.is_file():
+        raise CallbackError(
+            f"openssl could not make a certificate for the local listener "
+            f"(exit {result.returncode}): {result.stderr.strip()[:400]}\n\n"
+            f"Authorize without the listener instead:\n\n"
+            f"    python -m hockey.yahoo auth-url"
+        )
     return cert, key
 
 
