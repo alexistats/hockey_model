@@ -39,6 +39,11 @@ class Token:
     access_token: str
     refresh_token: str
     expires_at: float  # unix seconds
+    # Which app issued this. Not a secret - it travels in the authorize URL -
+    # and it is the only way to notice that .env now names a different app than
+    # the one the stored token belongs to. Optional so a token saved before this
+    # field existed still loads.
+    client_id: str | None = None
 
     @property
     def expired(self) -> bool:
@@ -117,6 +122,7 @@ def _post_token(payload: dict[str, str]) -> Token:
         access_token=body["access_token"],
         refresh_token=body["refresh_token"],
         expires_at=time.time() + float(body.get("expires_in", 3600)),
+        client_id=client_id,
     )
 
 
@@ -167,9 +173,28 @@ def load_token() -> Token:
     return Token(**json.loads(path.read_text(encoding="utf-8")))
 
 
+def stale_credentials(token: Token) -> bool:
+    """Whether the stored token was issued by a different app than .env names.
+
+    Changing the app and not re-authorizing is silently confusing: the old
+    refresh token still refreshes, the new access token still looks normal, and
+    every call still answers 403 - so the diagnosis lands on the new app, which
+    was never tested. Worth one comparison to rule out.
+    """
+    client_id, _ = _require_credentials()
+    return token.client_id is not None and token.client_id != client_id
+
+
 def current_access_token() -> str:
     """A valid access token, refreshing first if the stored one is stale."""
     token = load_token()
+    if stale_credentials(token):
+        raise YahooAuthError(
+            f"{_token_path()} was issued by a different Yahoo app than the one "
+            f"YAHOO_CLIENT_ID now names, so it cannot speak for the current app. "
+            f"Refreshing it would keep the old app's permissions and every call "
+            f"would go on failing. Re-authorize: python -m hockey.yahoo login"
+        )
     if token.expired:
         token = refresh(token)
     return token.access_token

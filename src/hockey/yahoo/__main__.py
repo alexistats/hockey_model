@@ -61,6 +61,46 @@ def _doctor() -> None:
     print(f"token file   : {app_settings.yahoo_token_path}")
     print()
 
+    # The failure this catches: change the app in .env, skip `login`, and every
+    # probe below tests a token the *old* app issued. All three refuse it, and
+    # the diagnosis lands on the new app, which was never contacted. The stored
+    # client id settles it outright; for a token written before that field
+    # existed, .env being the newer file is the same warning with less
+    # certainty. Either way this is a stop, not a note - the probes are
+    # worthless until it is resolved.
+    token_file = Path(app_settings.yahoo_token_path)
+    env_file = Path(".env")
+    try:
+        stale = oauth.stale_credentials(oauth.load_token())
+    except oauth.YahooAuthError as exc:
+        raise SystemExit(f"No usable token: {exc}") from None
+    older = (
+        token_file.exists()
+        and env_file.exists()
+        and token_file.stat().st_mtime < env_file.stat().st_mtime
+    )
+    if stale or older:
+        why = (
+            "its client id does not match YAHOO_CLIENT_ID"
+            if stale
+            else "it may predate the app now configured"
+        )
+        # Printed rather than raised with a message, so it lands on stdout in
+        # order with the header above instead of interleaving from stderr.
+        print("The saved token is older than the credentials it would be tested with.")
+        print()
+        print(f"  {token_file} was written before .env was last changed, and")
+        print(f"  {why}.")
+        print()
+        print("Refreshing it keeps whatever the issuing app was granted, so every probe")
+        print("below would fail for the old app and tell you nothing about the new one.")
+        print()
+        print("Authorize first, then run doctor again:")
+        print()
+        print("    python -m hockey.yahoo login")
+        print()
+        raise SystemExit(1)
+
     try:
         token = oauth.current_access_token()
     except oauth.YahooAuthError as exc:
