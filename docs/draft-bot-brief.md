@@ -4,7 +4,8 @@ Paste this into the draft-bot project as its starting context. It describes
 what `hockey_models` hands over, and — more importantly — every way that output
 can mislead a consumer that treats it as ground truth.
 
-Written 2026-09-20 against board `artifacts/board_v3`, fitted 2026-09-11.
+Written 2026-09-20 against `artifacts/board_v3` (skaters, fitted 2026-09-11)
+and `artifacts/goalies_v2` (goalies, fitted 2026-09-20).
 
 ---
 
@@ -31,6 +32,15 @@ goalies GS 1, W 6, GA −1.5, SV 0.3, SHO 4.
 | `draws_batch_*.npz` | The posterior itself — `draws` (fantasy totals), `games_played`, `stat_<category>`, all `(n_draws, n_players)` |
 | `diagnostics.csv` | Per-batch r-hat, ESS, divergences |
 | `config/eligibility_2026.csv` | Yahoo position eligibility, `nhl_id → positions` |
+
+Goalies come from their own board directory (`artifacts/goalies_v2`):
+
+| File | What it is |
+|---|---|
+| `goalie_board.csv` | Per goalie: mean, floor, p20, p80, ceiling, sd, `exp_starts`, `exp_wins`, `exp_saves`, `exp_ga`, `exp_shutouts`, `save_pct`, `last_season`, `override` |
+| `goalie_draws.npz` | Fantasy-point draws only — no per-category arrays |
+| `posterior.nc` | The full posterior, saved before anything is computed from it |
+| `parameters.csv`, `diagnostics.csv` | r-hat, ESS, divergences |
 
 **Prefer the draws over the summaries.** Every interesting question — P(A > B),
 "how often does he clear 300 shots", joint outcomes across categories — is a
@@ -142,20 +152,68 @@ Consequences for the bot:
   the live sync would, so the model cannot tell the difference — but a
   mid-season settings change would be invisible.
 
-### 9. The pool is 295 skaters and **no goalies**
+### 9. Goalies exist now, from a **separate model** — read the differences
 
-- Goalies are not modelled at all, and the league starts **two per team** with
-  wins at 6 points. That is a large hole; treat any goalie logic as external
-  until this changes.
-- 73 of the 295 skaters are already below replacement. The board does not
-  extend past 295, so deep-bench and waiver players are unpriced — absence from
-  the board is not evidence a player is bad.
+The pool is 295 skaters + 66 goalies. `python -m hockey.export <board>
+--goalies <goalie board>` merges them; without that flag the board is skaters
+only and the goalie slots go unpriced.
+
+Merging is legitimate because the two fits are **independent** — goalies share
+no parameters with skaters, and independent draws are exactly what P(A > B) is
+defined over. Replacement level is a property of the roster, not of how a
+player was fitted, so the same functions price both.
+
+What differs, and will bite a consumer that assumes uniformity:
+
+- **Different categories.** Goalies have `exp_starts`, `exp_wins`, `exp_saves`,
+  `exp_ga`, `exp_shutouts`, `save_pct`; the skater category columns are NaN for
+  them, and vice versa. A NaN here is an absence, not a zero — do not fill it.
+- **No per-category draws.** Only goalie *point totals* were saved, so
+  `P(A > B)` works on totals but **not** per category. Skaters have both.
+- **No age.** The aging curve was measured on skaters and never fitted for
+  goalies, so `age` is NaN. Do not infer one.
+- **Starts, not games.** `exp_games` for a goalie is expected *starts*.
+- **Only goalies who played last season are projected.** The workload walk will
+  happily carry a retired goalie to the projected season with a confident
+  number attached — the first run of this put Luongo, Lundqvist and Crawford on
+  the board, and Ben Bishop at 404 points six seasons after his last game. The
+  board now requires an appearance in the most recent season. If you rebuild it
+  yourself, keep that filter.
+- **Goalie tiers run wide.** Five goalies in tier 1 against one centre, because
+  goalie outcomes are uncertain enough that the 40% threshold holds longer. That
+  is real information — the top goalies are genuinely interchangeable — not a
+  bug to correct.
+- **Volume is a refund.** Saves pay 0.3 and goals against cost 1.5, so a shot
+  faced breaks even at .833 save percentage and every NHL goalie clears it.
+  Facing more shots is always net positive in this league. Do not penalise a
+  goalie for a leaky defence without also crediting the volume.
+- **`config/goalie_priors.yaml`** can override workload per goalie and nudge
+  team shot volume or win rate. Overrides apply as distributions, not point
+  estimates. If the bot regenerates the board, it inherits whatever is in there.
+
+Where the variance actually is, measured on 447 goalie-seasons: **71% of a
+goalie's season fantasy total is starts**, 17% is per-start quality. Win rate is
+the team term that matters (team sd 0.239 on the logit scale, three times the
+save-rate terms, on the category worth 6 points). Save percentage splits about
+evenly between goalie and team — the commonly quoted "team explains two thirds"
+is an artifact of grouping 447 observations into 264 team-seasons; shuffled team
+labels "explain" 56.8% of it.
+
+Also: 73 of the 295 skaters are already below replacement, and the board does
+not extend past the pool, so deep-bench and waiver players are unpriced —
+absence from the board is not evidence a player is bad.
 
 ### 10. Sampling caveats
 
-- Per-batch r-hat **1.006–1.010**, lowest ESS 1,369, **zero divergences** on
-  `board_v3`. Good, but keep diagnostics attached to any number you derive —
-  a summary from chains that did not converge is not a result.
+- Skaters, per batch: r-hat **1.006–1.010**, lowest ESS 1,369, **zero
+  divergences** on `board_v3`.
+- Goalies, `goalies_v2`: **zero divergences**, lowest ESS 240, every global
+  parameter r-hat ≤ **1.0096**. One variance component, `sigma_goalie_shots`,
+  sits at **1.0115** — it is weakly identified because goalie style barely
+  moves shots faced against the team effect, and it has little influence on the
+  projection. Stated rather than hidden.
+- Keep diagnostics attached to any number you derive — a summary from chains
+  that did not converge is not a result.
 - Players are fitted in **batches of 50**, conditionally independent given
   shared parameters. Comparing a column from one batch with a column from
   another is valid under that assumption, but they are not the same posterior
@@ -196,15 +254,17 @@ Consequences for the bot:
    remaining pool and the roster shape — never refit. `fill_slots` is the
    capacity-aware primitive.
 3. Do its own assignment when scoring a whole roster, per caveat 1.
-4. Treat goalies as out of scope until the goalie model lands.
+4. Read goalie rows as a different shape, per caveat 9 - different
+   categories, no per-category draws, no age, starts rather than games.
 5. Keep r-hat next to anything it reports.
 
 ## Regenerating upstream
 
 ```
 docker compose up -d                               # Postgres on 5434
-python -m hockey.model.run_staged --pool 300       # the board, ~12 min
-python -m hockey.export artifacts/board_v3         # replacement, value, tiers
-python scripts/build_draft_ui.py artifacts/board_v3
+python -m hockey.model.run_staged --pool 300       # the skater board, ~12 min
+python -m hockey.model.run_goalies --tune 2500     # the goalie board, ~25 min
 python -m hockey.yahoo eligibility <paste file>    # refresh eligibility
+python -m hockey.export artifacts/board_v3 --goalies artifacts/goalies_v2
+python scripts/build_draft_ui.py artifacts/board_v3 --goalies artifacts/goalies_v2
 ```
