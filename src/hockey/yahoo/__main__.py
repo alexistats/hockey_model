@@ -14,14 +14,17 @@ everything afterwards runs unattended.
 import argparse
 import json
 import logging
+from collections import Counter
 from pathlib import Path
 
 import httpx
 
 from hockey.config import settings as app_settings
 from hockey.db import SessionLocal
+from hockey.seasons import PROJECTION_SEASON
 from hockey.yahoo import callback as callback_mod
 from hockey.yahoo import crosswalk as crosswalk_mod
+from hockey.yahoo import eligibility as eligibility_mod
 from hockey.yahoo import oauth
 from hockey.yahoo import settings as settings_mod
 from hockey.yahoo.client import BASE_URL, YahooFantasyClient, YahooPermissionError
@@ -173,6 +176,35 @@ def _doctor() -> None:
     print()
 
 
+def _eligibility(source: Path) -> None:
+    if not source.exists():
+        raise SystemExit(f"no such file: {source}")
+    pasted = eligibility_mod.parse(source.read_text(encoding="utf-8"))
+    if not pasted:
+        raise SystemExit(
+            f"{source} has no player rows in it. The parser looks for lines shaped "
+            f'like "COL - C" with the player name two lines above, which is how the '
+            f"Yahoo player list pastes."
+        )
+    with SessionLocal() as session:
+        resolved, misses = eligibility_mod.resolve(session, pasted)
+
+    out = Path(f"config/eligibility_{PROJECTION_SEASON // 10000}.csv")
+    eligibility_mod.write_csv(resolved, out)
+
+    multi = sum(1 for r in resolved if len(r.positions) > 1)
+    print(f"{len(resolved)}/{len(pasted)} players resolved to NHL ids; wrote {out}")
+    print(f"{multi} of them are eligible at more than one position")
+    by_method = Counter(r.method for r in resolved)
+    for method, n in by_method.most_common():
+        print(f"  {method:18} {n}")
+    if misses:
+        print()
+        print(f"{len(misses)} unresolved, left out rather than guessed:")
+        for entry, why in misses:
+            print(f"  {why:22} {entry.name} ({entry.team}, {','.join(entry.positions)})")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m hockey.yahoo")
     parser.add_argument(
@@ -182,6 +214,7 @@ def main() -> None:
             "auth-url",
             "exchange",
             "doctor",
+            "eligibility",
             "game-key",
             "my-leagues",
             "settings",
@@ -190,7 +223,9 @@ def main() -> None:
             "dump",
         ],
     )
-    parser.add_argument("code", nargs="?", help="authorization code, for `exchange`")
+    parser.add_argument(
+        "code", nargs="?", help="authorization code for `exchange`; paste file for `eligibility`"
+    )
     parser.add_argument("--league-id", default=None)
     parser.add_argument(
         "--game-key",
@@ -245,6 +280,16 @@ def main() -> None:
 
     if args.command == "doctor":
         _doctor()
+        return
+
+    if args.command == "eligibility":
+        if not args.code:
+            raise SystemExit(
+                "usage: python -m hockey.yahoo eligibility <paste file>\n\n"
+                "Copy the player list out of the Yahoo web UI into a text file first. "
+                "This exists because the Fantasy API is no longer self-serve; see doctor."
+            )
+        _eligibility(Path(args.code))
         return
 
     client = YahooFantasyClient()

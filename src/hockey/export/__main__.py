@@ -26,6 +26,8 @@ from hockey.export import (
     scarcity,
     tiers,
 )
+from hockey.seasons import PROJECTION_SEASON
+from hockey.yahoo.eligibility import load_csv as load_eligibility
 from hockey.yahoo.settings import load_roster_from_yaml
 
 logger = logging.getLogger(__name__)
@@ -73,11 +75,40 @@ def main() -> None:
             f"rerun hockey.model.run_staged."
         )
 
+    # Yahoo eligibility when we have it, NHL primary position otherwise. The
+    # difference is not cosmetic: a player Yahoo lists at two positions is
+    # drafted out of whichever pool is shorter, and one Yahoo lists somewhere
+    # other than their NHL position is being priced against the wrong pool
+    # entirely.
+    eligibility = load_eligibility(Path(f"config/eligibility_{PROJECTION_SEASON // 10000}.csv"))
+    if eligibility:
+        covered = board["player_id"].isin(eligibility)
+        board["eligible"] = [
+            eligibility.get(int(p), (pos,))
+            for p, pos in zip(board["player_id"], board["position"], strict=True)
+        ]
+        logger.info(
+            "Yahoo eligibility for %d of %d players; the other %d fall back to their "
+            "NHL primary position",
+            int(covered.sum()),
+            len(board),
+            int((~covered).sum()),
+        )
+    else:
+        logger.warning(
+            "no eligibility file, so positions are NHL primary positions and every "
+            "dual-eligible player is undervalued. Build one with: "
+            "python -m hockey.yahoo eligibility <paste file>"
+        )
+
     roster = load_roster_from_yaml()
     slots = replacement_slots(roster, args.teams, bench_to_skaters=not args.no_bench)
     # The pool is skaters only until the goalie model exists, so a goalie slot
     # would set a replacement level against an empty pool.
-    slots = {p: n for p, n in slots.items() if p in set(board["position"])}
+    known = set(board["position"])
+    if "eligible" in board:
+        known |= {p for e in board["eligible"] for p in e}
+    slots = {p: n for p, n in slots.items() if p in known}
     levels = replacement_levels(board, slots)
     valued = add_value_over_replacement(board, levels)
 

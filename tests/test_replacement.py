@@ -134,3 +134,94 @@ def test_tiers_break_on_overlap_not_on_point_gaps():
     assigned = tiers(board, draws, [1, 2, 3, 4])
     assert assigned[1] == assigned[2] == 1  # 40 points apart, still one tier
     assert assigned[3] == 1 and assigned[4] == 2  # 20 apart, a real break
+
+
+# --- Yahoo position eligibility -------------------------------------------
+#
+# The league fills a slot from everyone eligible for it, not from everyone the
+# NHL happens to list there. Two ways of getting that wrong are easy and both
+# were written before these tests existed: pooling every eligible player per
+# position double-counts the ones another position will take, and valuing each
+# player at whatever position has the lowest baseline sends all of them to the
+# same one. Capacity is what rules both out.
+
+
+def eligible_board(rows: list[tuple[str, tuple[str, ...], float]]) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "player_id": range(1, len(rows) + 1),
+            "player": [f"p{i}" for i in range(len(rows))],
+            "position": [r[0] for r in rows],
+            "eligible": [r[1] for r in rows],
+            "mean": [r[2] for r in rows],
+            "floor": [r[2] - 50 for r in rows],
+            "ceiling": [r[2] + 50 for r in rows],
+        }
+    )
+
+
+def test_fill_slots_never_exceeds_the_slots_that_exist():
+    from hockey.export.replacement import fill_slots
+
+    # Everyone can play both wings, so a naive pool would count each of them
+    # twice and both positions would look twice as deep as the league is.
+    board = eligible_board([("LW", ("LW", "RW"), 500 - 10 * i) for i in range(40)])
+    assigned, leftover = fill_slots(board, {"LW": 10, "RW": 10})
+
+    from collections import Counter
+
+    filled = Counter(assigned.values())
+    assert filled == {"LW": 10, "RW": 10}
+    assert len(assigned) + len(leftover) == len(board)
+
+
+def test_replacement_reads_off_who_is_actually_left_over():
+    from hockey.export.replacement import replacement_levels as levels_of
+
+    # 10 slots each, 30 players, all dual eligible. 20 get taken, so the
+    # baseline must come from the 21st onward - not from the 11th, which is
+    # what pooling each position separately would have used.
+    board = eligible_board([("LW", ("LW", "RW"), 300 - 10 * i) for i in range(30)])
+    levels = levels_of(board, {"LW": 10, "RW": 10}, window=2)
+    baseline = dict(zip(levels["position"], levels["replacement"], strict=True))
+    # ranks 21 and 22 are means 100 and 90
+    assert baseline["LW"] == pytest.approx(95.0)
+    assert baseline["RW"] == pytest.approx(95.0)
+
+
+def test_dual_eligibility_is_worth_at_least_single_eligibility():
+    from hockey.export.replacement import replacement_levels as levels_of
+
+    # Same projection, but one of them can also fill the scarcer position.
+    shared = [("RW", ("RW",), 400 - i) for i in range(30)]
+    scarce = [("C", ("C",), 200 - i) for i in range(30)]
+    rows = [*shared, *scarce, ("RW", ("RW",), 350.0), ("RW", ("RW", "C"), 350.0)]
+    board = eligible_board(rows)
+    levels = levels_of(board, {"C": 10, "RW": 10}, window=3)
+    valued = add_value_over_replacement(board, levels)
+
+    single = valued[valued["player"] == f"p{len(rows) - 2}"].iloc[0]
+    dual = valued[valued["player"] == f"p{len(rows) - 1}"].iloc[0]
+    assert dual["mean"] == single["mean"]
+    assert dual["vorp"] >= single["vorp"]
+    # and the slot it was valued at is the one that earned the extra
+    assert dual["slot"] == "C"
+
+
+def test_a_board_without_eligibility_is_unchanged():
+    # The column is optional, and a board that predates it must value exactly
+    # as it did before - otherwise every saved run silently changes meaning.
+    board = pd.concat(
+        [
+            board_of("C", [500 - 10 * i for i in range(30)]),
+            board_of("D", [400 - 10 * i for i in range(30)]),
+        ],
+        ignore_index=True,
+    )
+    slots = {"C": 10, "D": 10}
+    levels = replacement_levels(board, slots, window=3)
+    valued = add_value_over_replacement(board, levels)
+    assert list(valued["slot"]) == list(valued["position"])
+    baseline = dict(zip(levels["position"], levels["replacement"], strict=True))
+    # ranks 11-13 at C are 400, 390, 380
+    assert baseline["C"] == pytest.approx(390.0)

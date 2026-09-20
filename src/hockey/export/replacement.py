@@ -57,6 +57,48 @@ def replacement_slots(
     return {p: n * n_teams for p, n in slots.items()}
 
 
+def _eligible(row, fallback: str) -> tuple[str, ...]:
+    got = getattr(row, "eligible", None)
+    return tuple(got) if got else (fallback,)
+
+
+def fill_slots(
+    board: pd.DataFrame, slots: dict[str, float], column: str = "mean"
+) -> tuple[dict[int, str], pd.DataFrame]:
+    """Hand out the league's slots best first, and return who is left over.
+
+    Dual eligibility cannot be handled by asking each position who could fill it
+    and counting to the cutoff. Those pools overlap, so every one of them counts
+    players the others will take: ask who could play right wing and you get 106
+    names, but 42 right-wing slots are not filled from the best 42 of them,
+    because most are away filling centre and left wing. Reading replacement off
+    that inflated pool understates value at exactly the positions where dual
+    eligibility is commonest - measured here, right wing's baseline came out 100
+    points high and defencemen took 10 of the top 25 as a result.
+
+    Nor can each player simply be valued at whichever position has the lowest
+    baseline. That is the same answer for everybody, so every dual-eligible
+    player stampedes into one position and the others are left short.
+
+    Capacity is what both miss, so this spends it: walk the board best first,
+    give each player an open slot they are eligible for, and prefer the position
+    with the most still open, which keeps a position from being starved by a
+    run on it. When the slots are gone, whoever remains is by definition freely
+    available - and that is what replacement level means.
+    """
+    openings = {p: int(round(n)) for p, n in slots.items()}
+    assigned: dict[int, str] = {}
+    for row in board.sort_values(column, ascending=False).itertuples():
+        open_to = [p for p in _eligible(row, row.position) if openings.get(p, 0) > 0]
+        if not open_to:
+            continue
+        pick = max(open_to, key=lambda p: openings[p])
+        openings[pick] -= 1
+        assigned[int(row.player_id)] = pick
+    leftover = board[~board["player_id"].astype(int).isin(assigned)]
+    return assigned, leftover
+
+
 def replacement_levels(
     board: pd.DataFrame, slots: dict[str, float], window: int = 6, column: str = "mean"
 ) -> pd.DataFrame:
@@ -66,33 +108,36 @@ def replacement_levels(
     the cutoff, because one player's projection is noisy and the baseline it
     sets would propagate that noise into every value at the position.
     """
+    assigned, leftover = fill_slots(board, slots, column)
+    leftover = leftover.sort_values(column, ascending=False)
+    taken = pd.Series(assigned)
+
     rows = []
-    for position, group in board.groupby("position"):
-        ordered = group.sort_values(column, ascending=False).reset_index(drop=True)
-        cutoff = slots.get(position)
-        if cutoff is None:
-            continue
-        start = int(round(cutoff))
-        window_rows = ordered.iloc[start : start + window]
-        if window_rows.empty:
-            # The pool does not reach replacement at this position, so the
-            # baseline would be extrapolated. Say so rather than quietly using
-            # the worst player in the pool, which would understate the gap.
+    for position in sorted(slots):
+        free = leftover[[position in _eligible(r, r.position) for r in leftover.itertuples()]]
+        if free.empty:
+            # Every eligible player was absorbed, so the baseline would have to
+            # be extrapolated past the end of the pool. Say so rather than
+            # quietly inventing one, which would overstate value here.
             logger.warning(
-                "pool of %d %s ends before replacement level (%d); "
-                "value over replacement at this position is a lower bound",
-                len(ordered),
+                "every %s-eligible player fits in a slot; value over replacement "
+                "at this position is a lower bound",
                 position,
-                start,
             )
-            window_rows = ordered.tail(window)
+            free = board[[position in _eligible(r, r.position) for r in board.itertuples()]]
+            free = free.sort_values(column, ascending=False).tail(window)
+        head = free.head(window)
+        filled = taken[taken == position]
+        starters = board[board["player_id"].astype(int).isin(filled.index)]
         rows.append(
             {
                 "position": position,
-                "drafted": start,
-                "pool": len(ordered),
-                "replacement": float(window_rows[column].mean()),
-                "starter_cutoff": float(ordered[column].iloc[: start or 1].min()),
+                "drafted": len(filled),
+                "pool": len(filled) + len(free),
+                "replacement": float(head[column].mean()),
+                "starter_cutoff": (
+                    float(starters[column].min()) if len(starters) else float(head[column].mean())
+                ),
             }
         )
     return pd.DataFrame(rows).sort_values("replacement", ascending=False).reset_index(drop=True)
@@ -116,11 +161,23 @@ def add_value_over_replacement(
             f"config has no slot for them, so their value cannot be measured "
             f"against anything"
         )
-    out["replacement"] = out["position"].map(baseline)
+    # A player is worth what they are worth in the scarcest slot they can fill,
+    # so value is taken at their best eligible position and `slot` records which
+    # - a value with no position attached cannot be checked. This is a per-player
+    # maximum, unlike the capacity-constrained pass that set the baselines, and
+    # that is the point: the baseline is what the league can get instead, while
+    # this is the best use this particular player can be put to.
+    out["slot"] = [
+        min(
+            (p for p in _eligible(r, r.position) if p in baseline),
+            key=lambda p: baseline[p],
+            default=r.position,
+        )
+        for r in out.itertuples()
+    ]
+    out["replacement"] = out["slot"].map(baseline)
     out["vorp"] = out[column] - out["replacement"]
-    out["pos_rank"] = (
-        out.groupby("position")[column].rank(ascending=False, method="min").astype(int)
-    )
+    out["pos_rank"] = out.groupby("slot")[column].rank(ascending=False, method="min").astype(int)
     return out.sort_values("vorp", ascending=False).reset_index(drop=True)
 
 
@@ -131,8 +188,11 @@ def scarcity(board: pd.DataFrame, levels: pd.DataFrame, depth: int = 60) -> pd.D
     whose curve falls off a cliff at rank 12 has to be taken early; one that
     stays flat to rank 40 can wait, however good its best player is.
     """
+    # `slot` when eligibility assigned one, position otherwise - the curve has
+    # to be the pool the drafter is choosing from, not the NHL's labelling.
+    key = "slot" if "slot" in board else "position"
     frames = []
-    for position, group in board.groupby("position"):
+    for position, group in board.groupby(key):
         ordered = group.sort_values("mean", ascending=False).head(depth).reset_index(drop=True)
         frames.append(
             pd.DataFrame(
@@ -161,7 +221,8 @@ def tiers(board: pd.DataFrame, draws: np.ndarray, ids: list[int], threshold: flo
     two players five points apart are a coin flip or not depending entirely on
     how wide they are.
     """
-    position_of = dict(zip(board["player_id"], board["position"], strict=True))
+    key = "slot" if "slot" in board else "position"
+    position_of = dict(zip(board["player_id"], board[key], strict=True))
     mean_of = dict(zip(board["player_id"], board["mean"], strict=True))
     column_of = {pid: i for i, pid in enumerate(ids)}
     assignment = {}

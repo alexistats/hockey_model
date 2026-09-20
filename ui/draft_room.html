@@ -587,28 +587,56 @@ footer b { color: var(--slate); font-weight: 600; }
   // This is the reason the page recomputes rather than reading a column: as a
   // position empties, every remaining player at it is worth more, and a static
   // value column cannot say so.
+  const eligible = (p) => (p.e && p.e.length ? p.e : [p.p]);
+
   let levels = {};
   function recompute() {
+    // Slots still to be filled, so replacement rises as a position empties:
+    // fewer teams still need one, and fewer are left to take.
+    const openings = {};
+    for (const pos of POSITIONS) {
+      openings[pos] = Math.max(0, Math.round(DATA.slots[pos] - countGone(pos)));
+    }
+    // Hand those out best first. Dual eligibility makes this necessary rather
+    // than pooling by position: the pools overlap, so counting each separately
+    // counts players the other positions will take, and every position looks
+    // deeper than the league really is. Whoever is left when the slots run out
+    // is what "freely available" means, and that is replacement.
+    const live = P.filter((p) => !state.gone.has(p.i)).sort((a, b) => b.m - a.m);
+    const taken = new Set();
+    for (const p of live) {
+      const open = eligible(p).filter((pos) => openings[pos] > 0);
+      if (!open.length) continue;
+      const pick = open.reduce((a, b) => (openings[b] > openings[a] ? b : a));
+      openings[pick]--;
+      taken.add(p.i);
+    }
+    const spare = live.filter((p) => !taken.has(p.i));
     levels = {};
     for (const pos of POSITIONS) {
-      const live = P.filter((p) => p.p === pos && !state.gone.has(p.i))
-                    .sort((a, b) => b.m - a.m);
-      // Slots still to be filled at this position, so replacement rises as the
-      // position empties: fewer teams still need one, and fewer are left to take.
-      const start = Math.max(0, Math.round(DATA.slots[pos] - countGone(pos)));
-      let window = live.slice(start, start + 6);
-      if (!window.length) window = live.slice(-6);
+      let window = spare.filter((p) => eligible(p).includes(pos)).slice(0, 6);
+      if (!window.length) {
+        window = live.filter((p) => eligible(p).includes(pos)).slice(-6);
+      }
       levels[pos] = window.length
         ? window.reduce((s, p) => s + p.m, 0) / window.length
         : 0;
     }
-    for (const p of P) p.vorp = p.m - (levels[p.p] || 0);
+    // A player is worth what they are worth in the scarcest slot they can fill.
+    for (const p of P) {
+      const open = eligible(p).filter((pos) => pos in levels);
+      const best = open.length
+        ? open.reduce((a, b) => (levels[b] < levels[a] ? b : a))
+        : p.p;
+      p.slot = best;
+      p.vorp = p.m - (levels[best] || 0);
+    }
   }
 
   /* ---------- tiers, from the distributions ---------- */
   function retier() {
     for (const pos of POSITIONS) {
-      const live = P.filter((p) => p.p === pos && !state.gone.has(p.i))
+      const live = P.filter((p) => p.slot === pos && !state.gone.has(p.i))
                     .sort((a, b) => b.m - a.m);
       let tier = 1, anchor = null;
       for (const p of live) {
@@ -616,7 +644,7 @@ footer b { color: var(--slate); font-weight: 600; }
         else if (beats(p.i, anchor) < 0.40) { tier++; anchor = p.i; }
         p.tier = tier;
       }
-      for (const p of P) if (p.p === pos && state.gone.has(p.i)) p.tier = null;
+      for (const p of P) if (p.slot === pos && state.gone.has(p.i)) p.tier = null;
     }
   }
 
@@ -640,7 +668,9 @@ footer b { color: var(--slate); font-weight: 600; }
   function visible() {
     const q = state.q.trim().toLowerCase();
     let list = P.filter((p) => {
-      if (state.pos !== "ALL" && p.p !== state.pos) return false;
+      // Filtering by a position asks who could fill it, so this is eligibility
+      // rather than the single slot the player is currently valued at.
+      if (state.pos !== "ALL" && !eligible(p).includes(state.pos)) return false;
       if (state.hideGone && state.gone.has(p.i)) return false;
       if (q && !p.n.toLowerCase().includes(q) && !p.t.toLowerCase().includes(q)) return false;
       return true;
@@ -664,9 +694,9 @@ footer b { color: var(--slate); font-weight: 600; }
         <td class="rk">${n + 1}</td>
         <td class="left">
           <div class="pname">${p.n}</div>
-          <div class="psub">${p.p} · ${p.t} · ${p.a}y</div>
+          <div class="psub">${eligible(p).join("/")} · ${p.t} · ${p.a}y</div>
         </td>
-        <td>${p.tier ? `<span class="${tierClass}">${p.p}${p.tier}</span>` : ""}</td>
+        <td>${p.tier ? `<span class="${tierClass}">${p.slot}${p.tier}</span>` : ""}</td>
         <td class="dim">${p.a}</td>
         <td class="range">
           <div class="track" style="--f:${pct(p.f)}%;--l:${pct(p.l)}%;--m:${pct(p.m)}%;--h:${pct(p.h)}%;--c:${pct(p.c)}%">
@@ -694,7 +724,12 @@ footer b { color: var(--slate); font-weight: 600; }
   function drawStrip() {
     const strip = document.getElementById("strip");
     strip.innerHTML = POSITIONS.map((pos) => {
-      const live = P.filter((p) => p.p === pos && !state.gone.has(p.i)).sort((a, b) => b.m - a.m);
+      // Who could fill this slot, not who is currently valued in it. A drafter
+      // looking at right wing wants every right-wing-eligible player left, and
+      // valuing a dual-eligible player at centre does not make him unavailable
+      // here. The counts across positions therefore overlap, and should.
+      const live = P.filter((p) => eligible(p).includes(pos) && !state.gone.has(p.i))
+                    .sort((a, b) => b.m - a.m);
       const depth = Math.min(live.length, 40);
       const pts = live.slice(0, depth);
       const top = pts.length ? pts[0].m : 1;
@@ -731,7 +766,7 @@ footer b { color: var(--slate); font-weight: 600; }
       </button>`;
     }).join("");
   }
-  const countGone = (pos) => P.filter((p) => p.p === pos && state.gone.has(p.i)).length;
+  const countGone = (pos) => P.filter((p) => p.slot === pos && state.gone.has(p.i)).length;
 
   /* ---------- board shape: tiers and value, against what I still need ---------- */
   // The manual version of this is three columns of sticky notes. The point of
@@ -739,13 +774,13 @@ footer b { color: var(--slate); font-weight: 600; }
   // empties, and a paper tier list does not.
 
   const SHAPE = () => POSITIONS.filter((p) => DATA.rosterShape[p]);
-  const liveAt = (pos) => P.filter((p) => p.p === pos && !state.gone.has(p.i));
+  const liveAt = (pos) => P.filter((p) => p.slot === pos && !state.gone.has(p.i));
 
   // Starting slots I have not filled yet. Bench is positionless, so it is not
   // a need at any one position - it is depth, counted separately.
   function myNeeds() {
     const filled = {};
-    for (const i of state.roster) filled[P[i].p] = (filled[P[i].p] || 0) + 1;
+    for (const i of state.roster) filled[P[i].slot] = (filled[P[i].slot] || 0) + 1;
     const out = {};
     for (const pos of SHAPE()) out[pos] = Math.max(0, DATA.rosterShape[pos] - (filled[pos] || 0));
     return { filled, need: out };
@@ -759,7 +794,7 @@ footer b { color: var(--slate); font-weight: 600; }
     const pool = P.filter((p) => !state.gone.has(p.i)).sort((a, b) => b.vorp - a.vorp);
     const taken = new Set(pool.slice(0, picks).map((p) => p.i));
     const best = (pos, skip) => {
-      const c = pool.find((p) => p.p === pos && !(skip && taken.has(p.i)));
+      const c = pool.find((p) => eligible(p).includes(pos) && !(skip && taken.has(p.i)));
       return c ? c.vorp : null;
     };
     const out = {};
@@ -850,7 +885,7 @@ footer b { color: var(--slate); font-weight: 600; }
     }
     document.getElementById("runs").innerHTML = window.length
       ? `<span>Last ${window.length}:</span>` + positions.map((pos) => {
-          const n = window.filter((i) => P[i].p === pos).length;
+          const n = window.filter((i) => P[i].slot === pos).length;
           const share = n / window.length;
           const expected = demandTotal ? demand[pos] / demandTotal : 0;
           const hot = n >= 3 && share > expected * 1.5;
@@ -948,7 +983,7 @@ footer b { color: var(--slate); font-weight: 600; }
     /* the chips */
     const chips = picked.map((i, n) => `
       <span class="chip-p ${n === 0 ? "ref" : ""}" style="--sw:${colour(n)}">
-        ${P[i].n}<span class="tag">${P[i].p}${n === 0 ? " · ref" : ""}</span>
+        ${P[i].n}<span class="tag">${eligible(P[i]).join("/")}${n === 0 ? " · ref" : ""}</span>
         <button data-drop="${i}" title="Remove">×</button>
       </span>`).join("");
 
@@ -1017,7 +1052,7 @@ footer b { color: var(--slate); font-weight: 600; }
         <td>${fmt0(p.g)}</td>
         <td><span class="mbar" style="--sw:${colour(n)}"><i style="width:${
           ((healthy / NDRAWS) * 100).toFixed(0)}%"></i></span>${Math.round((healthy / NDRAWS) * 100)}%</td>
-        <td>${p.p}${p.tier || "—"}</td>
+        <td>${p.slot}${p.tier || "—"}</td>
         <td>${signed(p.vorp)}</td>
       </tr>`;
     }).join("");
@@ -1102,7 +1137,7 @@ footer b { color: var(--slate); font-weight: 600; }
     }).join("");
 
     el.innerHTML = `
-      <h2>${p.p} ${p.tier ? "tier " + p.tier : ""} · ${p.t}</h2>
+      <h2>${eligible(p).join("/")} ${p.tier ? "tier " + p.tier : ""} · ${p.t}</h2>
       <div class="who"><h3>${p.n}</h3><span class="num">${fmt0(p.m)}</span></div>
       <div class="whosub">${p.a} years old · ${fmt0(p.g)} of ${DATA.gamesInSeason} games expected ·
         value ${signed(p.vorp)} over replacement</div>
@@ -1129,7 +1164,7 @@ footer b { color: var(--slate); font-weight: 600; }
   // The drafter's actual question: if I pass, what is the chance the next names
   // at this position are as good? Straight from the draws.
   function drawWait(p) {
-    const live = P.filter((q) => q.p === p.p && !state.gone.has(q.i) && q.i !== p.i)
+    const live = P.filter((q) => q.slot === p.slot && !state.gone.has(q.i) && q.i !== p.i)
                   .sort((a, b) => b.m - a.m).slice(0, 5);
     document.getElementById("waitlist").innerHTML = live.length
       ? live.map((q) => {
@@ -1140,7 +1175,7 @@ footer b { color: var(--slate); font-weight: 600; }
             <span class="pnum">${Math.round(prob * 100)}%</span>
           </li>`;
         }).join("")
-      : `<li class="empty">Nobody left at ${p.p}.</li>`;
+      : `<li class="empty">Nobody left at ${p.slot}.</li>`;
     document.querySelector(".wait h2").textContent =
       `Chance each beats ${p.n.split(" ").slice(-1)[0]}`;
   }
@@ -1152,7 +1187,7 @@ footer b { color: var(--slate); font-weight: 600; }
           const p = P[i];
           return `<li data-i="${i}">
             <span class="nm">${p.n}</span>
-            <span class="mv">${p.p} · ${fmt0(p.m)}</span>
+            <span class="mv">${eligible(p).join("/")} · ${fmt0(p.m)}</span>
             <button class="mini" data-act="up" title="Move up">↑</button>
             <button class="mini" data-act="drop" title="Remove">×</button>
           </li>`;
@@ -1312,10 +1347,11 @@ footer b { color: var(--slate); font-weight: 600; }
 
   /* ---------- export ---------- */
   document.getElementById("export").addEventListener("click", async () => {
-    const header = "rank,player,position,team,age,points,floor,p20,p80,ceiling,value,expected_games";
+    const header =
+      "rank,player,eligible,slot,team,age,points,floor,p20,p80,ceiling,value,expected_games";
     const lines = state.mine.map((i, n) => {
       const p = P[i];
-      return [n + 1, `"${p.n}"`, p.p, p.t, p.a, fmt0(p.m), fmt0(p.f), fmt0(p.l),
+      return [n + 1, `"${p.n}"`, `"${eligible(p).join("/")}"`, p.slot, p.t, p.a, fmt0(p.m), fmt0(p.f), fmt0(p.l),
               fmt0(p.h), fmt0(p.c), Math.round(p.vorp), fmt0(p.g)].join(",");
     });
     const csv = [header, ...lines].join("\n");
