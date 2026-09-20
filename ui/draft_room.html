@@ -645,19 +645,34 @@ footer b { color: var(--slate); font-weight: 600; }
     }
   }
 
-  /* ---------- tiers, from the distributions ---------- */
+  /* ---------- tiers, from the distributions, struck once ---------- */
+  // Struck over the whole pool at load and never restruck. Re-striking over
+  // the survivors sounds reasonable and ruins the thing tiers are for: take
+  // the one centre in tier 1 and the next two are promoted into it, so tier 1
+  // still reads "2 left" and a position that is emptying looks untouched. The
+  // grid exists to answer "ten tier-4 defencemen against three tier-4
+  // forwards", and that question needs the label to mean the same thing all
+  // night.
+  //
+  // `tslot` is the position each player was struck in, frozen with the tier.
+  // The slot a player is *valued* at still moves as replacement levels move,
+  // but letting the grid's columns move with it would reintroduce the same
+  // wobble a row at a time. This also matches export/replacement.py, which has
+  // always struck tiers once over the full pool.
+  let tiersStruck = false;
   function retier() {
+    if (tiersStruck) return;
     for (const pos of POSITIONS) {
-      const live = P.filter((p) => p.slot === pos && !state.gone.has(p.i))
-                    .sort((a, b) => b.m - a.m);
+      const all = P.filter((p) => p.slot === pos).sort((a, b) => b.m - a.m);
       let tier = 1, anchor = null;
-      for (const p of live) {
+      for (const p of all) {
         if (anchor === null) anchor = p.i;
         else if (beats(p.i, anchor) < 0.40) { tier++; anchor = p.i; }
         p.tier = tier;
+        p.tslot = pos;
       }
-      for (const p of P) if (p.slot === pos && state.gone.has(p.i)) p.tier = null;
     }
+    tiersStruck = true;
   }
 
   /* ---------- the shared points scale for every range bar ---------- */
@@ -708,7 +723,7 @@ footer b { color: var(--slate); font-weight: 600; }
           <div class="pname">${p.n}</div>
           <div class="psub">${eligible(p).join("/")} · ${p.t}${p.a == null ? "" : " · " + p.a + "y"}</div>
         </td>
-        <td>${p.tier ? `<span class="${tierClass}">${p.slot}${p.tier}</span>` : ""}</td>
+        <td>${p.tier ? `<span class="${tierClass}">${p.tslot}${p.tier}</span>` : ""}</td>
         <td class="dim">${p.a == null ? "—" : p.a}</td>
         <td class="range">
           <div class="track" style="--f:${pct(p.f)}%;--l:${pct(p.l)}%;--m:${pct(p.m)}%;--h:${pct(p.h)}%;--c:${pct(p.c)}%">
@@ -787,6 +802,9 @@ footer b { color: var(--slate); font-weight: 600; }
 
   const SHAPE = () => POSITIONS.filter((p) => DATA.rosterShape[p]);
   const liveAt = (pos) => P.filter((p) => p.slot === pos && !state.gone.has(p.i));
+  // The grid counts in the position a player was tiered in, which does not
+  // move, so a column means the same thing at pick 1 and pick 120.
+  const struckAt = (pos) => P.filter((p) => p.tslot === pos && !state.gone.has(p.i));
 
   // Starting slots I have not filled yet. Bench is positionless, so it is not
   // a need at any one position - it is depth, counted separately.
@@ -859,7 +877,7 @@ footer b { color: var(--slate); font-weight: 600; }
 
     /* the grid */
     const rows = bands().map((b) => {
-      const counts = positions.map((pos) => liveAt(pos).filter(b.test).length);
+      const counts = positions.map((pos) => struckAt(pos).filter(b.test).length);
       const present = counts.filter((n) => n > 0);
       const lo = present.length ? Math.min(...present) : 0;
       const hi = Math.max(...counts, 0);
@@ -1081,7 +1099,7 @@ footer b { color: var(--slate); font-weight: 600; }
         <td>${fmt0(p.g)}</td>
         <td>${healthy === null ? "—" : `<span class="mbar" style="--sw:${colour(n)}"><i style="width:${
           ((healthy / NDRAWS) * 100).toFixed(0)}%"></i></span>${Math.round((healthy / NDRAWS) * 100)}%`}</td>
-        <td>${p.slot}${p.tier || "—"}</td>
+        <td>${p.tslot}${p.tier || "—"}</td>
         <td>${signed(p.vorp)}</td>
       </tr>`;
     }).join("");

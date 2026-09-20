@@ -73,14 +73,23 @@ JavaScript; the CSV does not.
 If the bot uses static VORP mid-draft it will systematically overvalue whatever
 position has already been picked out.
 
-### 3. Tiers mean two different things in two places
+### 3. Tiers are struck once, and must stay that way
 
-- `export/replacement.py` strikes tiers **once over the full pool** (static).
-- The draft page re-strikes them **over remaining players** as picks happen, so
-  tier 1 refills — when the tier-1 right wings go, the next three are promoted
-  into tier 1.
+Both `export/replacement.py` and the draft page strike tiers **once over the
+full pool** and never restrike them. If you recompute tiers yourself, do the
+same.
 
-Same word, two behaviours. Decide which you want and do not mix them.
+Re-striking over the survivors sounds reasonable and destroys the thing tiers
+are for. The page used to do it: draft the one centre in tier 1 and the next
+two were promoted into it, so tier 1 still read "2 left" and a position that
+was emptying looked untouched. A count of what remains in a band is only
+meaningful if the band means the same thing all night.
+
+Players keep their tier after being drafted — filter on drafted status, not on
+a null tier. Each player also carries the position they were **struck in**,
+which is frozen; the slot they are currently *valued* at can move as
+replacement levels move, and mixing the two reintroduces the same wobble one
+row at a time.
 
 Also: **tier numbers are not comparable across positions.** Tiers are struck
 within a position, so a tier-4 defenceman and a tier-4 centre are not
