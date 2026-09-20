@@ -31,6 +31,13 @@ def main() -> None:
     parser.add_argument("--tune", type=int, default=1500)
     parser.add_argument("--chains", type=int, default=4)
     parser.add_argument("--min-starts", type=int, default=15, help="board cutoff, not fit cutoff")
+    parser.add_argument(
+        "--include-retired",
+        action="store_true",
+        help="keep goalies who did not play last season. Off by default: the walk "
+        "happily carries a goalie six seasons past his last game and produces a "
+        "confident projection for someone who has retired.",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -109,8 +116,27 @@ def main() -> None:
         priors=priors,
     )
 
-    # The board is every goalie the model knows; the cutoff is only about what
+    # The board is every goalie the model knows; the cutoffs are only about what
     # is worth reading. A goalie left out is not a goalie judged bad.
+    #
+    # Recency is not optional. The workload walk takes a step per season whether
+    # or not anyone played, so a goalie last seen in 2018-19 still arrives at the
+    # projected season with a plausible-looking number attached - the first run
+    # of this put Roberto Luongo, Henrik Lundqvist and Corey Crawford on the
+    # board, all long retired, with Ben Bishop projected 404 points at 47 starts.
+    # Nothing downstream could have caught that, because the projection is
+    # complete and well formed; it is simply about someone who will not play.
+    latest = int(frame["season"].max())
+    if not args.include_retired:
+        stale = board[board["last_season"] < latest]
+        board = board[board["last_season"] == latest]
+        if len(stale):
+            logger.info(
+                "left out %d goalie(s) who did not appear in %d, the most recent "
+                "season in the data",
+                len(stale),
+                latest,
+            )
     board = board[board["last_season_starts"] >= args.min_starts].reset_index(drop=True)
     board.insert(0, "player", _names(board["player_id"]))
     board.to_csv(out / "goalie_board.csv", index=False)

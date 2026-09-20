@@ -54,10 +54,60 @@ def load_draws(out: Path) -> tuple[list[int], np.ndarray]:
     return ids, np.concatenate(blocks, axis=1)
 
 
+def merge_goalies(
+    board: pd.DataFrame, directory: Path
+) -> tuple[pd.DataFrame, list[int], np.ndarray]:
+    """Fold a goalie board into the skater board so one ranking covers both.
+
+    Goalies are fitted by a separate model - they share no parameters with
+    skaters and nothing about a goalie's season informs a winger's - so the two
+    posteriors are independent. That independence is what makes stacking them
+    legitimate: a goalie draw and a skater draw are not the same posterior
+    sample, but comparing independent draws is exactly how P(A > B) is defined
+    for two unrelated quantities.
+
+    What they do share is the league. Replacement level, value over replacement
+    and tiers are all properties of the roster, so once both are on one board
+    the existing functions price a goalie against a goalie slot without knowing
+    anything about how he was fitted.
+    """
+    goalies = pd.read_csv(directory / "goalie_board.csv")
+    with np.load(directory / "goalie_draws.npz") as f:
+        goalie_ids = [int(x) for x in f["player_ids"]]
+        goalie_draws = f["draws"].astype("float32")
+
+    keep = set(goalies["player_id"].astype(int))
+    order = [i for i, pid in enumerate(goalie_ids) if pid in keep]
+    goalie_ids = [goalie_ids[i] for i in order]
+    goalie_draws = goalie_draws[:, order]
+
+    rows = goalies.rename(columns={"player": "player"}).copy()
+    rows["position"] = "G"
+    rows["eligible"] = [("G",)] * len(rows)
+    # The skater board carries columns a goalie has no analogue for. Filling
+    # them with the goalie's own equivalents where one exists, and leaving the
+    # rest absent, keeps a downstream reader from quietly reading a zero as a
+    # measurement.
+    rows["games"] = rows["exp_starts"].round().astype(int)
+    rows["exp_games"] = rows["exp_starts"]
+    rows["spread"] = rows["ceiling"] - rows["floor"]
+    for column in board.columns:
+        if column not in rows:
+            rows[column] = np.nan
+    merged = pd.concat([board, rows[board.columns]], ignore_index=True)
+    return merged, goalie_ids, goalie_draws
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m hockey.export")
     parser.add_argument("directory", help="a board directory, e.g. artifacts/board_v2")
     parser.add_argument("--teams", type=int, default=N_TEAMS)
+    parser.add_argument(
+        "--goalies",
+        default=None,
+        help="a goalie board directory, e.g. artifacts/goalies_v1. Without it the "
+        "board is skaters only and the goalie slots are left unpriced.",
+    )
     parser.add_argument(
         "--no-bench",
         action="store_true",
@@ -101,10 +151,21 @@ def main() -> None:
             "python -m hockey.yahoo eligibility <paste file>"
         )
 
+    goalie_ids: list[int] = []
+    goalie_draws = None
+    if args.goalies:
+        board, goalie_ids, goalie_draws = merge_goalies(board, Path(args.goalies))
+        logger.info("merged %d goalies from %s", len(goalie_ids), args.goalies)
+    else:
+        logger.warning(
+            "no --goalies directory, so the board is skaters only and the two goalie "
+            "slots per team are left unpriced. Fit one with hockey.model.run_goalies."
+        )
+
     roster = load_roster_from_yaml()
     slots = replacement_slots(roster, args.teams, bench_to_skaters=not args.no_bench)
-    # The pool is skaters only until the goalie model exists, so a goalie slot
-    # would set a replacement level against an empty pool.
+    # A slot with no pool behind it would set replacement against nothing, so
+    # positions absent from the board are dropped rather than priced at zero.
     known = set(board["position"])
     if "eligible" in board:
         known |= {p for e in board["eligible"] for p in e}
@@ -113,6 +174,18 @@ def main() -> None:
     valued = add_value_over_replacement(board, levels)
 
     ids, draws = load_draws(out)
+    if goalie_draws is not None:
+        if goalie_draws.shape[0] != draws.shape[0]:
+            # Tiers compare columns draw for draw, so two posteriors of
+            # different length cannot be stacked without silently truncating
+            # one of them.
+            raise SystemExit(
+                f"the skater posterior has {draws.shape[0]} draws and the goalie "
+                f"posterior {goalie_draws.shape[0]}; refit one of them so the two "
+                f"match, rather than comparing a column against a shorter one"
+            )
+        ids = [*ids, *goalie_ids]
+        draws = np.concatenate([draws, goalie_draws], axis=1)
     valued["tier"] = valued["player_id"].map(tiers(valued, draws, ids))
     curve = scarcity(valued, levels)
 

@@ -171,6 +171,7 @@ def project(
                 "exp_ga": float(goals_against.mean()),
                 "exp_shutouts": float(shutouts.mean()),
                 "save_pct": float(saves.sum() / max(shots.sum(), 1)),
+                "last_season": int(recent.loc[pid, "season"]),
                 "last_season_starts": int(recent.loc[pid, "starts"]),
                 "override": override is not None and override.get("starts") is not None,
             }

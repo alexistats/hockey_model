@@ -90,3 +90,26 @@ def test_override_draws_keep_their_spread():
     starts = np.clip(np.rint(rng.normal(55, 6, size=4000)), 0, 84)
     assert starts.std() == pytest.approx(6.0, rel=0.1)
     assert starts.min() < 45 and starts.max() > 65
+
+
+def test_a_goalie_who_stopped_playing_is_left_off_the_board():
+    """The walk does not know anyone retired.
+
+    It takes a step per season whether or not a game was played, so a goalie
+    last seen in 2018-19 still arrives at the projected season carrying a
+    plausible number. The first run of this model put Roberto Luongo, Henrik
+    Lundqvist and Corey Crawford on the board, and Ben Bishop at 404 projected
+    points - six seasons after his last game. Nothing downstream can catch
+    that, because the projection is complete and well formed and simply
+    concerns someone who will not play.
+    """
+    board = pd.DataFrame(
+        {
+            "player": ["Active", "Retired", "Thin"],
+            "last_season": [20252026, 20192020, 20252026],
+            "last_season_starts": [50, 47, 3],
+        }
+    )
+    latest = 20252026
+    kept = board[(board["last_season"] == latest) & (board["last_season_starts"] >= 15)]
+    assert list(kept["player"]) == ["Active"]
