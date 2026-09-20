@@ -1,3 +1,4 @@
+<meta charset="utf-8">
 <title>Blue Line Draft Board</title>
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -125,6 +126,54 @@ body {
 .pos-foot { font-size: 10.5px; color: var(--faint); letter-spacing: .04em; display: flex; justify-content: space-between; }
 .pos-foot .cliff { color: var(--red); font-weight: 600; }
 
+/* ---- board shape: what is left, by tier and position ---- */
+.shape { background: var(--surface); border: 1px solid var(--edge); border-radius: 5px; padding: 13px 15px 14px; }
+.shape-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; margin-bottom: 11px; }
+.shape-head h2 { margin: 0; font-size: 10.5px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--faint); }
+.shape-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(232px, 290px); gap: 20px; align-items: start; }
+@media (max-width: 900px) { .shape-body { grid-template-columns: 1fr; } }
+
+table.grid { border-collapse: collapse; width: 100%; }
+table.grid th, table.grid td { padding: 3px 5px; text-align: center; font-family: var(--mono); font-size: 12px; }
+table.grid thead th { font-family: var(--sans); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); font-weight: 600; padding-bottom: 5px; }
+table.grid th.band { text-align: left; font-family: var(--sans); font-size: 11px; color: var(--slate); font-weight: 600; white-space: nowrap; width: 1%; padding-right: 10px; }
+table.grid th.band em { font-style: normal; font-family: var(--mono); color: var(--faint); font-size: 10px; margin-left: 5px; }
+table.grid tbody tr + tr th.band, table.grid tbody tr + tr td { border-top: 1px solid var(--edge-soft); }
+table.grid td.n { color: var(--ink); font-weight: 600; }
+table.grid td.n.zero { color: var(--faint); font-weight: 400; }
+table.grid td.n.all { color: var(--slate); font-weight: 400; }
+table.grid td.n i { font-style: normal; display: inline-block; min-width: 25px; padding: 1.5px 0; border-radius: 3px; }
+table.grid td.n.warm i { background: var(--red-wash); color: var(--red); }
+table.grid td.n.need i { box-shadow: inset 0 0 0 1px var(--line); }
+table.grid col.dim { background: var(--well); }
+
+.runs { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 11px; color: var(--slate); }
+.runs .run { display: flex; align-items: center; gap: 5px; }
+.runs .runbar { width: 40px; height: 5px; background: var(--well); border-radius: 3px; overflow: hidden; }
+.runs .runbar i { display: block; height: 100%; background: var(--line); }
+.runs .run.hot .runbar i { background: var(--red); }
+.runs .run.hot b { color: var(--red); }
+.runs b { font-family: var(--mono); font-weight: 600; color: var(--ink); }
+
+.needs { list-style: none; margin: 0; padding: 0; }
+.needs li { display: flex; align-items: center; gap: 8px; padding: 4.5px 0; border-bottom: 1px solid var(--edge-soft); font-size: 12px; }
+.needs li:last-child { border-bottom: 0; }
+.needs .pos { font-stretch: 62%; font-weight: 700; font-size: 15px; letter-spacing: .04em; width: 26px; flex: 0 0 auto; }
+.needs .pips { flex: 0 0 auto; display: flex; gap: 2.5px; }
+.needs .pip { width: 7px; height: 7px; border-radius: 50%; border: 1px solid var(--edge); }
+.needs .pip.on { background: var(--line); border-color: var(--line); }
+.needs .pip.bn { border-style: dashed; }
+.needs .cost { margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--slate); text-align: right; }
+.needs .cost b { display: block; font-size: 13px; font-weight: 600; color: var(--ink); }
+.needs li.urgent .cost b { color: var(--red); }
+.needs li.full { opacity: .45; }
+
+.waitset { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--faint); }
+.waitset input { width: 46px; font: inherit; font-family: var(--mono); color: var(--ink); background: var(--surface); border: 1px solid var(--edge); border-radius: 3px; padding: 2px 5px; text-align: right; }
+.verdict { margin: 11px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--slate); }
+.verdict b { color: var(--ink); font-weight: 600; }
+.verdict .take { color: var(--line); font-weight: 700; font-stretch: 62%; letter-spacing: .03em; }
+
 /* ---- controls ---- */
 .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 input[type="search"], select, .btn {
@@ -217,6 +266,7 @@ thead th.rangehead { padding-bottom: 2px; vertical-align: bottom; }
 .mini:hover { border-color: var(--line); color: var(--line); }
 .mini.on { background: var(--green); border-color: var(--green); color: var(--on-accent); }
 .mini.gone-on { background: var(--red); border-color: var(--red); color: var(--on-accent); }
+.mini.took-on { background: var(--line); border-color: var(--line); color: var(--on-accent); }
 
 /* ---- rail ---- */
 .rail { display: flex; flex-direction: column; gap: 14px; position: sticky; top: 14px; }
@@ -280,12 +330,34 @@ footer b { color: var(--slate); font-weight: 600; }
     <div class="mast-meta">
       <div class="meta-cell"><b class="num" id="m-pool">—</b><span>skaters left</span></div>
       <div class="meta-cell"><b class="num" id="m-gone">—</b><span>off the board</span></div>
+      <div class="meta-cell"><b class="num" id="m-roster">—</b><span>on my roster</span></div>
       <div class="meta-cell"><b class="num" id="m-mine">—</b><span>on my list</span></div>
     </div>
   </header>
   <div class="blueline"></div>
 
   <section class="strip" id="strip" aria-label="Positional scarcity"></section>
+
+  <section class="shape" aria-label="What is left, by tier and position">
+    <div class="shape-head">
+      <h2>What is left</h2>
+      <div class="seg" id="shapemode" role="group" aria-label="How to band the grid">
+        <button data-mode="tier" aria-pressed="true">Tiers</button>
+        <button data-mode="vorp" aria-pressed="false">Value bands</button>
+      </div>
+      <div class="runs" id="runs"></div>
+      <label class="waitset">Picks until my turn
+        <input type="number" id="waitpicks" min="1" max="60" step="1" value="26">
+      </label>
+    </div>
+    <div class="shape-body">
+      <div><table class="grid" id="shapegrid"></table></div>
+      <div>
+        <ul class="needs" id="needs"></ul>
+        <p class="verdict" id="verdict"></p>
+      </div>
+    </div>
+  </section>
 
   <div class="controls">
     <input type="search" id="q" placeholder="Search a player" aria-label="Search a player">
@@ -383,7 +455,23 @@ footer b { color: var(--slate); font-weight: 600; }
     sort: "vorp", asc: false, pos: "ALL", q: "",
     hideGone: false, selected: P[0] ? P[0].i : null,
     gone: new Set(), mine: [],
+    // `order` is `gone` in pick sequence, which is the only way to see a run:
+    // a set says six defencemen are off the board, not that they went in a row.
+    order: [], roster: [], shapeMode: "tier", waitPicks: 26,
   };
+
+  // Marking someone drafted is one gesture with two meanings - by anyone, or by
+  // me - and they have to stay consistent, so both go through here.
+  function setGone(i, on, byMe) {
+    if (on) {
+      if (!state.gone.has(i)) { state.gone.add(i); state.order.push(i); }
+      if (byMe && !state.roster.includes(i)) state.roster.push(i);
+    } else {
+      state.gone.delete(i);
+      state.order = state.order.filter((x) => x !== i);
+      state.roster = state.roster.filter((x) => x !== i);
+    }
+  }
 
   const fmt0 = (x) => Math.round(x).toLocaleString();
   const fmt1 = (x) => x.toFixed(1);
@@ -460,6 +548,7 @@ footer b { color: var(--slate); font-weight: 600; }
   function drawRows() {
     const list = visible();
     const mine = new Set(state.mine);
+    const took = new Set(state.roster);
     tbody.innerHTML = list.map((p, n) => {
       const gone = state.gone.has(p.i);
       const tierClass = p.tier === 1 ? "chip t1" : p.tier === 2 ? "chip t2" : "chip";
@@ -482,12 +571,14 @@ footer b { color: var(--slate); font-weight: 600; }
         <td class="dim">${fmt0(p.g)}</td>
         <td class="acts">
           <button class="mini ${mine.has(p.i) ? "on" : ""}" data-act="mine" title="Add to my list">★</button>
-          <button class="mini ${gone ? "gone-on" : ""}" data-act="gone" title="Mark drafted">✕</button>
+          <button class="mini ${took.has(p.i) ? "took-on" : ""}" data-act="took" title="I drafted this player">+</button>
+          <button class="mini ${gone ? "gone-on" : ""}" data-act="gone" title="Someone else drafted this player">✕</button>
         </td>
       </tr>`;
     }).join("");
     document.getElementById("m-pool").textContent = P.length - state.gone.size;
     document.getElementById("m-gone").textContent = state.gone.size;
+    document.getElementById("m-roster").textContent = state.roster.length;
     document.getElementById("m-mine").textContent = state.mine.length;
   }
 
@@ -533,6 +624,168 @@ footer b { color: var(--slate); font-weight: 600; }
     }).join("");
   }
   const countGone = (pos) => P.filter((p) => p.p === pos && state.gone.has(p.i)).length;
+
+  /* ---------- board shape: tiers and value, against what I still need ---------- */
+  // The manual version of this is three columns of sticky notes. The point of
+  // doing it here is that both the tiers and the value bands move as the board
+  // empties, and a paper tier list does not.
+
+  const SHAPE = () => POSITIONS.filter((p) => DATA.rosterShape[p]);
+  const liveAt = (pos) => P.filter((p) => p.p === pos && !state.gone.has(p.i));
+
+  // Starting slots I have not filled yet. Bench is positionless, so it is not
+  // a need at any one position - it is depth, counted separately.
+  function myNeeds() {
+    const filled = {};
+    for (const i of state.roster) filled[P[i].p] = (filled[P[i].p] || 0) + 1;
+    const out = {};
+    for (const pos of SHAPE()) out[pos] = Math.max(0, DATA.rosterShape[pos] - (filled[pos] || 0));
+    return { filled, need: out };
+  }
+
+  // What a position costs me if I pass on it now. The next `waitPicks` picks are
+  // assumed to come off the top of the value board, which is the assumption the
+  // room mostly behaves like and the only one available without knowing the
+  // other managers. It is stated on the page for that reason.
+  function costOfWaiting(picks) {
+    const pool = P.filter((p) => !state.gone.has(p.i)).sort((a, b) => b.vorp - a.vorp);
+    const taken = new Set(pool.slice(0, picks).map((p) => p.i));
+    const best = (pos, skip) => {
+      const c = pool.find((p) => p.p === pos && !(skip && taken.has(p.i)));
+      return c ? c.vorp : null;
+    };
+    const out = {};
+    for (const pos of SHAPE()) {
+      const now = best(pos, false), then = best(pos, true);
+      out[pos] = { now, then, cost: now === null || then === null ? null : now - then };
+    }
+    return out;
+  }
+
+  function bands() {
+    const live = P.filter((p) => !state.gone.has(p.i));
+    if (state.shapeMode === "tier") {
+      const cap = 6;
+      const rows = [];
+      for (let t = 1; t <= cap; t++) rows.push({ key: `t${t}`, label: `Tier ${t}`, test: (p) => p.tier === t });
+      rows.push({ key: "rest", label: `Tier ${cap + 1}+`, test: (p) => p.tier > cap, remainder: true });
+      return rows;
+    }
+    // Value bands are the honest cross-position read: a tier 4 defenceman and a
+    // tier 4 centre are not the same player, but equal value over replacement is
+    // equal value, because replacement is already per position.
+    const top = Math.max(...live.map((p) => p.vorp), 1);
+    const raw = top / 6;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) || 10 * mag;
+    const rows = [];
+    for (let hi = Math.ceil(top / step) * step; hi > 0; hi -= step) {
+      const lo = hi - step;
+      rows.push({
+        key: `v${hi}`, label: `${fmt0(lo)}–${fmt0(hi)}`,
+        test: (p) => p.vorp >= lo && p.vorp < hi,
+      });
+    }
+    rows.push({ key: "vneg", label: "Below repl.", test: (p) => p.vorp < 0, remainder: true });
+    return rows;
+  }
+
+  function drawShape() {
+    const positions = SHAPE();
+    const { filled, need } = myNeeds();
+    const cost = costOfWaiting(state.waitPicks);
+
+    /* the grid */
+    const rows = bands().map((b) => {
+      const counts = positions.map((pos) => liveAt(pos).filter(b.test).length);
+      const present = counts.filter((n) => n > 0);
+      const lo = present.length ? Math.min(...present) : 0;
+      const hi = Math.max(...counts, 0);
+      const total = counts.reduce((s, n) => s + n, 0);
+      if (!total) return "";
+      const cells = counts.map((n) => {
+        const cls = [
+          "n",
+          n === 0 ? "zero" : "",
+          // The row's scarcest position, when the row is actually uneven and
+          // the shortage is real. This is the comparison the panel exists to
+          // make: three of one and twelve of the other is a reason to take the
+          // one there are three of. Twenty-four against seventy-nine is not a
+          // shortage at all, so the absolute cap keeps the mark meaningful,
+          // and the remainder row is skipped because everything below the last
+          // real band is a leftover, not a shortage.
+          !b.remainder && n > 0 && n === lo && n <= 6 && hi >= lo * 2 ? "warm" : "",
+        ].filter(Boolean).join(" ");
+        return `<td class="${cls}"><i>${n}</i></td>`;
+      }).join("");
+      return `<tr><th class="band">${b.label}</th>${cells}<td class="n all"><i>${total}</i></td></tr>`;
+    }).join("");
+    document.getElementById("shapegrid").innerHTML =
+      `<thead><tr><th class="band"></th>${
+        positions.map((p) => `<th>${p}</th>`).join("")}<th>All</th></tr></thead><tbody>${rows}</tbody>`;
+
+    /* the run meter */
+    const window = state.order.slice(-10);
+    const demand = {};
+    let demandTotal = 0;
+    for (const pos of positions) {
+      const d = Math.max(0, DATA.slots[pos] - countGone(pos));
+      demand[pos] = d;
+      demandTotal += d;
+    }
+    document.getElementById("runs").innerHTML = window.length
+      ? `<span>Last ${window.length}:</span>` + positions.map((pos) => {
+          const n = window.filter((i) => P[i].p === pos).length;
+          const share = n / window.length;
+          const expected = demandTotal ? demand[pos] / demandTotal : 0;
+          const hot = n >= 3 && share > expected * 1.5;
+          return `<span class="run ${hot ? "hot" : ""}" title="${pos}: ${n} of the last ${
+            window.length} picks; ${Math.round(expected * 100)}% of the slots still open">
+            <span>${pos}</span><span class="runbar"><i style="width:${(share * 100).toFixed(0)}%"></i></span><b>${n}</b>
+          </span>`;
+        }).join("")
+      : `<span>No picks marked yet — hit ✕ as players go, + for your own.</span>`;
+
+    /* my roster and the cost of passing */
+    document.getElementById("needs").innerHTML = positions.map((pos) => {
+      const have = filled[pos] || 0;
+      const slots = DATA.rosterShape[pos];
+      const c = cost[pos];
+      const pips = Array.from({ length: Math.max(slots, have) }, (_, k) =>
+        `<span class="pip ${k < have ? "on" : ""} ${k >= slots ? "bn" : ""}"></span>`).join("");
+      const urgent = need[pos] > 0 && c.cost !== null && c.cost >= 20;
+      // A cost of zero is a real answer, not a missing one: the player I would
+      // get at this position is the same now as in twenty-six picks. Rendering
+      // it as "+0" reads like a rounding artefact, so say nothing is lost.
+      const shown = c.cost === null ? "—" : Math.round(c.cost) <= 0 ? "0" : signed(-c.cost);
+      return `<li class="${need[pos] ? "" : "full"} ${urgent ? "urgent" : ""}">
+        <span class="pos">${pos}</span>
+        <span class="pips">${pips}</span>
+        <span class="cost"><b>${shown}</b>value if I wait</span>
+      </li>`;
+    }).join("");
+
+    /* the read */
+    const open = positions.filter((p) => need[p] > 0 && cost[p].cost !== null);
+    const el = document.getElementById("verdict");
+    if (!open.length) {
+      el.innerHTML = `<b>Every starting slot is filled.</b> From here the bench is positionless,
+        so take the largest value over replacement left on the board.`;
+    } else {
+      const ranked = [...open].sort((a, b) => cost[b].cost - cost[a].cost);
+      const first = ranked[0], second = ranked[1];
+      const gap = second ? cost[first].cost - cost[second].cost : null;
+      el.innerHTML = gap !== null && gap < 8
+        ? `<b>No clear call.</b> Passing on <span class="take">${first}</span> costs about
+           ${fmt0(cost[first].cost)} points of value and <span class="take">${second}</span>
+           about ${fmt0(cost[second].cost)} — close enough that either is defensible.
+           Take the better player.`
+        : `<b>Take a <span class="take">${first}</span>.</b> Waiting ${state.waitPicks} picks
+           costs about ${fmt0(cost[first].cost)} points of value there${
+             second ? `, against ${fmt0(cost[second].cost)} at ${second}` : ""}.
+           ${DATA.rosterShape.G ? "Goalies are not on this board." : ""}`;
+    }
+  }
 
   /* ---------- detail rail ---------- */
   function drawDetail() {
@@ -632,6 +885,7 @@ footer b { color: var(--slate); font-weight: 600; }
     retier();
     drawRows();
     drawStrip();
+    drawShape();
     drawDetail();
     drawMyList();
   }
@@ -643,7 +897,10 @@ footer b { color: var(--slate); font-weight: 600; }
     const i = Number(tr.dataset.i);
     const act = e.target.dataset.act;
     if (act === "gone") {
-      state.gone.has(i) ? state.gone.delete(i) : state.gone.add(i);
+      setGone(i, !state.gone.has(i), false);
+      save();
+    } else if (act === "took") {
+      setGone(i, !state.roster.includes(i), true);
       save();
     } else if (act === "mine") {
       const at = state.mine.indexOf(i);
@@ -677,6 +934,24 @@ footer b { color: var(--slate); font-weight: 600; }
     state.pos = state.pos === card.dataset.pos ? "ALL" : card.dataset.pos;
     syncFilters();
     render();
+  });
+
+  document.getElementById("shapemode").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    state.shapeMode = b.dataset.mode;
+    document.querySelectorAll("#shapemode button").forEach((x) =>
+      x.setAttribute("aria-pressed", String(x.dataset.mode === state.shapeMode)));
+    save();
+    drawShape();
+  });
+
+  document.getElementById("waitpicks").addEventListener("input", (e) => {
+    const n = Number(e.target.value);
+    if (!Number.isFinite(n) || n < 1) return;
+    state.waitPicks = Math.min(60, Math.round(n));
+    save();
+    drawShape();
   });
 
   document.getElementById("sortby").addEventListener("click", (e) => {
@@ -716,6 +991,8 @@ footer b { color: var(--slate); font-weight: 600; }
 
   document.getElementById("reset").addEventListener("click", () => {
     state.gone.clear();
+    state.order = [];
+    state.roster = [];
     save();
     render();
   });
@@ -764,7 +1041,10 @@ footer b { color: var(--slate); font-weight: 600; }
   let saveTimer = null;
 
   function save() {
-    const payload = { gone: [...state.gone], mine: state.mine, at: Date.now() };
+    const payload = {
+      gone: [...state.gone], mine: state.mine, order: state.order, roster: state.roster,
+      shapeMode: state.shapeMode, waitPicks: state.waitPicks, at: Date.now(),
+    };
     try { localStorage.setItem("bluelinedraft", JSON.stringify(payload)); } catch {}
     if (!store) return;
     clearTimeout(saveTimer);
@@ -780,6 +1060,17 @@ footer b { color: var(--slate); font-weight: 600; }
     if (!payload) return;
     state.gone = new Set(payload.gone || []);
     state.mine = (payload.mine || []).filter((i) => P[i]);
+    state.roster = (payload.roster || []).filter((i) => P[i] && state.gone.has(i));
+    // A board saved before pick order was tracked has a set and no sequence.
+    // Seeding the order from the set keeps the run meter honest about what it
+    // does not know rather than inventing an order for it.
+    const saved = (payload.order || []).filter((i) => state.gone.has(i));
+    state.order = saved.length === state.gone.size ? saved : [];
+    if (payload.shapeMode === "tier" || payload.shapeMode === "vorp") state.shapeMode = payload.shapeMode;
+    if (Number.isFinite(payload.waitPicks)) state.waitPicks = payload.waitPicks;
+    document.getElementById("waitpicks").value = state.waitPicks;
+    document.querySelectorAll("#shapemode button").forEach((x) =>
+      x.setAttribute("aria-pressed", String(x.dataset.mode === state.shapeMode)));
   }
 
   try { adopt(JSON.parse(localStorage.getItem("bluelinedraft"))); } catch {}

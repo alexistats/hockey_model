@@ -117,6 +117,11 @@ def main() -> None:
 
     roster = load_roster_from_yaml()
     slots = replacement_slots(roster, N_TEAMS)
+    # One team's shape, not the league's. `slots` answers where replacement
+    # level sits; this answers what *I* still have to fill, which is a different
+    # question and the one the board-shape panel is built on.
+    shape = {r["position"]: int(r["count"]) for r in roster if r.get("starting")}
+    bench = sum(int(r["count"]) for r in roster if r["position"] == "BN")
     positions = sorted(set(board["position"]), key=lambda p: ("C", "LW", "RW", "D").index(p))
     diagnostics = pd.read_csv(out / "diagnostics.csv")
     worst = float(diagnostics["worst_rhat"].max())
@@ -129,6 +134,8 @@ def main() -> None:
         "gamesInSeason": SEASON_LENGTH[PROJECTION_SEASON],
         "positions": positions,
         "slots": {p: slots[p] for p in positions},
+        "rosterShape": shape,
+        "bench": bench,
         "cats": list(ORDER),
         "catLabels": LABELS,
         "weights": weights,
@@ -144,7 +151,14 @@ def main() -> None:
             f"empties, because a pick is worth the gap to whoever else would fill the slot. "
             f"<b>Tiers</b> break where the next player's chance of outscoring the one who "
             f"opened the tier falls below 40 percent, so they follow the distributions "
-            f"rather than the point gaps. Positions are NHL primary positions, not Yahoo "
+            f"rather than the point gaps. <b>What is left</b> counts the players still "
+            f"available in each band. Tiers are struck within a position, so a tier 4 "
+            f"defenceman and a tier 4 centre are not the same player; value bands are the "
+            f"comparable read, because replacement level is already per position. "
+            f"<b>Value if I wait</b> assumes the next picks come off the top of the value "
+            f"board - the room will not do exactly that, so read it as the direction and "
+            f"rough size of the cost, not a forecast. Positions are NHL primary "
+            f"positions, not Yahoo "
             f"eligibility, so dual-eligible players are undervalued here. Goalies are not "
             f"modelled yet. Fitted {date.today():%d %B %Y}, worst batch r-hat {worst:.4f}."
         ),
