@@ -128,12 +128,22 @@ def _doctor() -> None:
     elif identity_ok and not fantasy_ok:
         print(
             "The token is real - it reads your Yahoo profile - but Fantasy refuses it.\n"
-            "That is a missing API permission on the app itself.\n\n"
-            "  Open https://developer.yahoo.com/apps/, pick this app, and under\n"
-            "  API Permissions tick 'Fantasy Sports' with Read or Read/Write.\n"
-            "  Then re-authorize: python -m hockey.yahoo login\n\n"
-            "Permissions are fixed when a token is issued, so the current token\n"
-            "cannot be upgraded by refreshing it."
+            "The OAuth side is therefore working: app registration, redirect URI,\n"
+            "client type and consent are all fine, and re-authorizing will not help.\n\n"
+            "Most likely this is not your app at all. On 22 July 2026 Yahoo stopped\n"
+            "provisioning Fantasy Sports API access through the developer portal and\n"
+            "moved it behind a manual approval programme. Every Fantasy endpoint began\n"
+            "answering 403 with exactly this message, for existing apps as well as new\n"
+            "ones, and the create-app form stopped offering the permission. There was\n"
+            "no announcement.\n\n"
+            "  Apply at https://sports.yahoo.com/developer/ - review is manual, and\n"
+            "  the turnaround is not published. Assume it is not days.\n\n"
+            "If you need league data before then, do not wait on this: transcribe the\n"
+            "scoring settings into a config file. config/league_2270.yaml is exactly\n"
+            "that, and the model reads it through the same build_scoring() as the live\n"
+            "sync, so nothing downstream can tell the difference.\n\n"
+            "Still worth ruling out first: an app only minutes old may simply not have\n"
+            "its permissions live yet."
         )
     else:
         print(
