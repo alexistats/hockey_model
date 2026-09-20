@@ -84,15 +84,17 @@ def authorization_url(with_scope: bool = True) -> str:
             "client_id": client_id,
             "redirect_uri": settings.yahoo_redirect_uri,
             "response_type": "code",
-            # Asking for a scope the app was never granted does not fail, and
-            # does not merely omit that scope: it poisons the whole grant. The
-            # token comes back looking normal and is then refused everywhere,
-            # including by the OpenID permissions the app genuinely does have.
-            # Measured here - with `scope=fspt-r` against an app lacking Fantasy
-            # Sports, even /openid/v1/userinfo answered 403; dropping the scope
-            # from the same app returned a full profile. So `with_scope=False`
-            # is the test that tells "the app is misregistered" apart from "the
-            # app does not have the scope I am asking for".
+            # A freshly created Yahoo app can issue tokens before its
+            # permissions are live, and such a token is refused everywhere -
+            # including by /openid/v1/userinfo, which is not part of the Fantasy
+            # API and needs no Fantasy permission. Observed here over eight
+            # minutes on one app: `scope=fspt-r` gave identity 403, no scope
+            # gave identity 200, then `scope=fspt-r` gave identity 200 again
+            # with nothing changed in this code. That last step rules out the
+            # scope parameter as the cause and leaves propagation delay, so do
+            # not read a 403 on a minutes-old app as a verdict on anything.
+            # `with_scope=False` narrows the grant to what the app already has,
+            # which is still a useful probe when a scope is in doubt.
             **({"scope": settings.yahoo_scope} if with_scope else {}),
             # Yahoo remembers a previous authorization and will silently
             # reissue against the OLD grant, so re-authorizing after adding
