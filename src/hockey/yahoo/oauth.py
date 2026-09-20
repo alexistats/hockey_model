@@ -63,7 +63,7 @@ def _require_credentials() -> tuple[str, str]:
     return settings.yahoo_client_id, settings.yahoo_client_secret
 
 
-def authorization_url() -> str:
+def authorization_url(with_scope: bool = True) -> str:
     """The URL to open in a browser to authorize this app.
 
     The redirect URI must be one the Yahoo app has registered, matched exactly
@@ -84,10 +84,16 @@ def authorization_url() -> str:
             "client_id": client_id,
             "redirect_uri": settings.yahoo_redirect_uri,
             "response_type": "code",
-            # Without this, Yahoo happily issues a valid bearer token that
-            # carries no fantasy access, and every API call answers 403. The
-            # token response gives no hint - it has no scope field at all.
-            "scope": settings.yahoo_scope,
+            # Asking for a scope the app was never granted does not fail, and
+            # does not merely omit that scope: it poisons the whole grant. The
+            # token comes back looking normal and is then refused everywhere,
+            # including by the OpenID permissions the app genuinely does have.
+            # Measured here - with `scope=fspt-r` against an app lacking Fantasy
+            # Sports, even /openid/v1/userinfo answered 403; dropping the scope
+            # from the same app returned a full profile. So `with_scope=False`
+            # is the test that tells "the app is misregistered" apart from "the
+            # app does not have the scope I am asking for".
+            **({"scope": settings.yahoo_scope} if with_scope else {}),
             # Yahoo remembers a previous authorization and will silently
             # reissue against the OLD grant, so re-authorizing after adding
             # a scope returns a token that still lacks it - with no consent

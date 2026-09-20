@@ -138,8 +138,15 @@ def _doctor() -> None:
     else:
         print(
             "Even Yahoo's own identity endpoint refuses this token, and that endpoint\n"
-            "is not part of the Fantasy API. So the token carries no permissions at\n"
-            "all, which is not a Fantasy Sports setting - it is the app registration.\n\n"
+            "is not part of the Fantasy API. So the token carries no permissions at all.\n\n"
+            "Two things cause that. Rule out the cheap one first:\n\n"
+            f"  Asking for a scope the app was never granted ({app_settings.yahoo_scope})\n"
+            "  poisons the entire grant, not just that scope - even the OpenID\n"
+            "  permissions the app does have stop working. Re-authorize without it:\n\n"
+            "      python -m hockey.yahoo login --no-scope\n\n"
+            "  If identity then answers 200, the app is registered correctly and is\n"
+            "  simply missing the API permission for that scope.\n\n"
+            "If --no-scope is refused too, it is the app registration itself.\n\n"
             "  On https://developer.yahoo.com/apps/, check in this order:\n"
             f"  1. Redirect URI(s) contains exactly {app_settings.yahoo_redirect_uri}\n"
             "     - character for character, port included, no trailing slash.\n"
