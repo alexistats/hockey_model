@@ -16,13 +16,15 @@ import json
 import logging
 from pathlib import Path
 
+import httpx
+
 from hockey.config import settings as app_settings
 from hockey.db import SessionLocal
 from hockey.yahoo import callback as callback_mod
 from hockey.yahoo import crosswalk as crosswalk_mod
 from hockey.yahoo import oauth
 from hockey.yahoo import settings as settings_mod
-from hockey.yahoo.client import YahooFantasyClient, YahooPermissionError
+from hockey.yahoo.client import BASE_URL, YahooFantasyClient, YahooPermissionError
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,82 @@ def _require_league_id(arg: str | None) -> str:
     return league_id
 
 
+# Yahoo answers 403 for two unrelated failures, and the message is identical.
+# One call separates them: Yahoo's own identity endpoint is not part of the
+# Fantasy API and does not need the Fantasy permission. If identity works and
+# fantasy does not, the app is missing its Fantasy Sports permission. If even
+# identity refuses, the token carries nothing at all, which is a redirect-URI
+# or app-registration problem and no amount of re-authorizing will fix it until
+# the app itself is corrected.
+IDENTITY_URL = "https://api.login.yahoo.com/openid/v1/userinfo"
+PROBES = (
+    ("identity", IDENTITY_URL),
+    ("fantasy, public data", f"{BASE_URL}/game/nhl?format=json"),
+    ("fantasy, this account", f"{BASE_URL}/users;use_login=1/games?format=json"),
+)
+
+
+def _doctor() -> None:
+    print()
+    print(f"redirect uri : {app_settings.yahoo_redirect_uri}")
+    print(f"scope        : {app_settings.yahoo_scope}")
+    print(f"token file   : {app_settings.yahoo_token_path}")
+    print()
+
+    try:
+        token = oauth.current_access_token()
+    except oauth.YahooAuthError as exc:
+        raise SystemExit(f"No usable token: {exc}") from None
+    print("access token : refreshed and usable")
+    print()
+
+    results = {}
+    with httpx.Client(timeout=20) as http:
+        for label, url in PROBES:
+            try:
+                status = http.get(url, headers={"Authorization": f"Bearer {token}"}).status_code
+            except httpx.HTTPError as exc:
+                print(f"  {label:22} network error: {exc}")
+                return
+            results[label] = status
+            print(f"  {label:22} {status}")
+    print()
+
+    identity_ok = results["identity"] < 400
+    fantasy_ok = results["fantasy, public data"] < 400
+
+    if identity_ok and fantasy_ok:
+        print("Both work. Yahoo is reachable and the token carries Fantasy permissions.")
+    elif identity_ok and not fantasy_ok:
+        print(
+            "The token is real - it reads your Yahoo profile - but Fantasy refuses it.\n"
+            "That is a missing API permission on the app itself.\n\n"
+            "  Open https://developer.yahoo.com/apps/, pick this app, and under\n"
+            "  API Permissions tick 'Fantasy Sports' with Read or Read/Write.\n"
+            "  Then re-authorize: python -m hockey.yahoo login\n\n"
+            "Permissions are fixed when a token is issued, so the current token\n"
+            "cannot be upgraded by refreshing it."
+        )
+    else:
+        print(
+            "Even Yahoo's own identity endpoint refuses this token, and that endpoint\n"
+            "is not part of the Fantasy API. So the token carries no permissions at\n"
+            "all, which is not a Fantasy Sports setting - it is the app registration.\n\n"
+            "  On https://developer.yahoo.com/apps/, check in this order:\n"
+            f"  1. Redirect URI(s) contains exactly {app_settings.yahoo_redirect_uri}\n"
+            "     - character for character, port included, no trailing slash.\n"
+            "  2. Application Type is 'Web Application'. An 'Installed Application'\n"
+            "     has no client secret and will not work with this flow.\n"
+            "  3. OpenID Connect Permissions includes at least 'Profile'.\n"
+            "  4. API Permissions includes 'Fantasy Sports'.\n\n"
+            "If the app looks right on all four, the fastest fix is to create a new\n"
+            "app rather than edit this one - Yahoo does not always re-issue\n"
+            "permissions on an edited app. Put the new id and secret in .env, then\n"
+            "run: python -m hockey.yahoo login"
+        )
+    print()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m hockey.yahoo")
     parser.add_argument(
@@ -45,6 +123,7 @@ def main() -> None:
             "login",
             "auth-url",
             "exchange",
+            "doctor",
             "game-key",
             "my-leagues",
             "settings",
@@ -104,6 +183,10 @@ def main() -> None:
             raise SystemExit("usage: python -m hockey.yahoo exchange <code>")
         oauth.exchange_code(args.code)
         print("Authorized. Token saved; you will not need to do this again.")
+        return
+
+    if args.command == "doctor":
+        _doctor()
         return
 
     client = YahooFantasyClient()
