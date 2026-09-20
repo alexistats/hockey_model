@@ -54,8 +54,11 @@ python -m hockey.ingest.coverage              # what actually landed
 python -m hockey.yahoo auth-url               # one-time Yahoo authorization
 python -m hockey.yahoo settings               # league scoring config
 python -m hockey.yahoo crosswalk              # Yahoo ids -> NHL ids
+python -m hockey.yahoo eligibility <paste>    # positions, from a web-UI paste
+python -m hockey.yahoo doctor                 # why Yahoo is answering 403
 python -m hockey.model.mvp                    # the end-to-end gate
 python -m hockey.model.run_staged --pool 300  # the draft board, ~20 min
+python -m hockey.model.run_goalies            # the goalie board, ~15 min
 python -m hockey.export artifacts/board_v2    # replacement level, value, tiers
 python scripts/build_draft_ui.py artifacts/board_v2   # the single-file draft page
 

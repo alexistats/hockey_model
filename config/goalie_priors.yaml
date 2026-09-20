@@ -1,0 +1,63 @@
+# Your judgement about goalies, recorded as parameters rather than typed over
+# the output. Everything here is optional; with the file empty the projection is
+# the model's alone.
+#
+# WHY THIS FILE EXISTS, AND WHAT IT IS ACTUALLY FOR
+#
+# Measured on eight seasons in this warehouse: 71% of the variance in a goalie's
+# season fantasy total comes from how many games he starts, and only 17% from
+# how well he plays per start. Starts are also the thing the game logs cannot
+# see coming - a July signing, a prospect handed the net, a tandem that becomes
+# a workhorse. That combination is what this file is for.
+#
+# So put your effort into `starts`. Adjusting a goalie's talent is mostly not
+# worth the keystrokes: the per-start rate is a sixth of the variance, and the
+# model already knows what his record says.
+#
+# HOW THE NUMBERS ARE USED
+#
+# `starts` and `starts_sd` become a distribution, not a point estimate. Saying
+# 55 with an sd of 6 means the floor and ceiling still carry your uncertainty.
+# Pinning a number with a tiny sd claims a confidence about a depth chart that
+# nobody has, and it will show up as a fake-narrow projection.
+#
+# Rough guide to starts_sd:
+#   3   entrenched starter, no credible backup
+#   6   clear starter on a normal team            <- the default when omitted
+#  10   tandem, or a job that could be lost
+#  14   genuinely unsettled
+#
+# `nhl_id` is required and is checked. An entry naming a goalie who is not in
+# the pool is an error, not a silent no-op, because a priors file that has
+# quietly stopped applying is worse than no priors file at all.
+#
+# TEAM ADJUSTMENTS
+#
+# `shots_adjust` is on the log scale, applied to shots faced per start:
+#   +0.05 is about 5% more rubber, -0.05 about 5% less.
+# `win_adjust` is on the logit scale, applied to win rate per start:
+#   +0.20 moves a .500 goalie to about .550; -0.20 to about .450.
+#
+# Use these for structural change the fitting window cannot contain - a new
+# system, a blue line rebuilt over the summer. Remember the model already has a
+# team effect per season; this is a nudge on top of it, not a replacement.
+#
+# ONE PIECE OF STRUCTURE WORTH KNOWING BEFORE YOU ADJUST ANYTHING
+#
+# In this league saves pay 0.3 and goals against cost 1.5, so a shot faced is
+# worth 0.3s - 1.5(1-s) and breaks even at a save percentage of .8333. Every
+# NHL goalie is well above that. Facing more shots is therefore always net
+# positive here, and a goalie behind a leaky defence is partly paid for it.
+# Do not assume a bad defensive team is simply bad for fantasy value - it costs
+# wins at 6 points each and refunds some of it in volume.
+
+goalies:
+  # - name: "Example Goalie"
+  #   nhl_id: 8471234
+  #   starts: 55
+  #   starts_sd: 6
+
+teams:
+  # - team: "BOS"
+  #   shots_adjust: 0.0
+  #   win_adjust: 0.0
