@@ -484,12 +484,24 @@ footer b { color: var(--slate); font-weight: 600; }
   // goals and draw k of their shots are one season, not two. Comparing a pair
   // across several categories is only meaningful because of that.
   const CAT_DRAWS = decode(DATA.catDraws);
+  // Goalies are fitted separately and have none of these categories, and the
+  // board is sorted by value so they sit among the skaters rather than after
+  // them. `catIndex` maps a row to its column in the skater-sized array, or -1.
+  const CAT_INDEX = DATA.catIndex || P.map((_, i) => i);
+  const N_SKATERS = CAT_INDEX.filter((k) => k >= 0).length;
+  const isGoalie = (p) => p.gcat != null;
   const catCol = (c, i) => {
-    const at = (c * P.length + i) * NDRAWS;
+    const k = CAT_INDEX[i];
+    if (k < 0) return null;
+    const at = (c * N_SKATERS + k) * NDRAWS;
     return CAT_DRAWS.subarray(at, at + NDRAWS);
   };
   const GAMES_DRAWS = decode(DATA.gamesDraws);
-  const gamesCol = (i) => GAMES_DRAWS.subarray(i * NDRAWS, (i + 1) * NDRAWS);
+  const gamesCol = (i) => {
+    const k = CAT_INDEX[i];
+    if (k < 0) return null;
+    return GAMES_DRAWS.subarray(k * NDRAWS, (k + 1) * NDRAWS);
+  };
 
   // P(a > b) over paired draws. Ties are split, because two integer category
   // totals land on the same number often enough that counting them as a loss
@@ -694,10 +706,10 @@ footer b { color: var(--slate); font-weight: 600; }
         <td class="rk">${n + 1}</td>
         <td class="left">
           <div class="pname">${p.n}</div>
-          <div class="psub">${eligible(p).join("/")} · ${p.t} · ${p.a}y</div>
+          <div class="psub">${eligible(p).join("/")} · ${p.t}${p.a == null ? "" : " · " + p.a + "y"}</div>
         </td>
         <td>${p.tier ? `<span class="${tierClass}">${p.slot}${p.tier}</span>` : ""}</td>
-        <td class="dim">${p.a}</td>
+        <td class="dim">${p.a == null ? "—" : p.a}</td>
         <td class="range">
           <div class="track" style="--f:${pct(p.f)}%;--l:${pct(p.l)}%;--m:${pct(p.m)}%;--h:${pct(p.h)}%;--c:${pct(p.c)}%">
             <i></i><b></b><u></u>
@@ -932,8 +944,7 @@ footer b { color: var(--slate); font-weight: 600; }
            Take the better player.`
         : `<b>Take a <span class="take">${first}</span>.</b> Waiting ${wait} picks
            costs about ${fmt0(cost[first].cost)} points of value there${
-             second ? `, against ${fmt0(cost[second].cost)} at ${second}` : ""}.
-           ${DATA.rosterShape.G ? "Goalies are not on this board." : ""}`;
+             second ? `, against ${fmt0(cost[second].cost)} at ${second}` : ""}.`;
     }
   }
 
@@ -1021,18 +1032,33 @@ footer b { color: var(--slate); font-weight: 600; }
     }).join("");
 
     /* every scoring category, same question */
-    const catRows = CATS.map((c, ci) => {
-      const cells = picked.map((i, n) => {
-        const mean = P[i].cat[c][0];
-        const p = n === 0 ? null : probBeats(catCol(ci, i), catCol(ci, ref));
-        return `<td>${mean.toFixed(1)}</td><td class="${
-          p === null ? "ref" : "p" + (p > 0.5 ? " win" : "")}">${
-          p === null ? "—" : Math.round(p * 100) + "%"}</td>`;
-      }).join("");
-      const w = DATA.weights[c] || 0;
-      return `<tr><th class="lead">${DATA.catLabels[c]}<br>
-        <span style="color:var(--faint);font-size:10px">${w > 0 ? "+" : ""}${w} each</span></th>${cells}</tr>`;
-    }).join("");
+    // Goalies and skaters do not share a scoring currency, so a mixed
+    // selection gets whichever rows every player in it actually has. Showing a
+    // goalie a zero for hits would read as a measurement rather than an absence.
+    // `picked` holds board indices, not players - passing them straight to
+    // isGoalie silently answers false for everyone and sends goalies down the
+    // skater path, where their absent categories throw.
+    const allGoalies = picked.every((i) => isGoalie(P[i]));
+    const anyGoalies = picked.some((i) => isGoalie(P[i]));
+    const rowKeys = allGoalies ? (DATA.goalieCats || []) : CATS;
+    const labelsFor = allGoalies ? DATA.goalieCatLabels : DATA.catLabels;
+    const weightsFor = allGoalies ? (DATA.goalieWeights || {}) : DATA.weights;
+    const catRows = anyGoalies && !allGoalies
+      ? ""
+      : rowKeys.map((c, ci) => {
+          const cells = picked.map((i, n) => {
+            const mean = allGoalies ? P[i].gcat[c] : P[i].cat[c][0];
+            const mine = allGoalies ? null : catCol(ci, i);
+            const theirs = allGoalies ? null : catCol(ci, ref);
+            const p = n === 0 || !mine || !theirs ? null : probBeats(mine, theirs);
+            return `<td>${mean.toFixed(1)}</td><td class="${
+              p === null ? "ref" : "p" + (p > 0.5 ? " win" : "")}">${
+              p === null ? "—" : Math.round(p * 100) + "%"}</td>`;
+          }).join("");
+          const w = weightsFor[c] || 0;
+          return `<tr><th class="lead">${labelsFor[c]}<br>
+            <span style="color:var(--faint);font-size:10px">${w > 0 ? "+" : ""}${w} each</span></th>${cells}</tr>`;
+        }).join("");
     const catHead = picked.map((i, n) =>
       `<th colspan="2"><span class="sw" style="--sw:${colour(n)}"></span>${
         P[i].n.split(" ").slice(-1)[0]}</th>`).join("");
@@ -1043,15 +1069,18 @@ footer b { color: var(--slate); font-weight: 600; }
     const fullish = Math.round(DATA.gamesInSeason * 0.85);
     const ctxRows = picked.map((i, n) => {
       const g = gamesCol(i);
-      let healthy = 0;
-      for (let k = 0; k < NDRAWS; k++) if (g[k] >= fullish) healthy++;
+      let healthy = null;
+      if (g) {
+        healthy = 0;
+        for (let k = 0; k < NDRAWS; k++) if (g[k] >= fullish) healthy++;
+      }
       const p = P[i];
       return `<tr>
         <td class="lead"><span class="sw" style="--sw:${colour(n)}"></span>${p.n}</td>
-        <td>${p.a}</td>
+        <td>${p.a == null ? "—" : p.a}</td>
         <td>${fmt0(p.g)}</td>
-        <td><span class="mbar" style="--sw:${colour(n)}"><i style="width:${
-          ((healthy / NDRAWS) * 100).toFixed(0)}%"></i></span>${Math.round((healthy / NDRAWS) * 100)}%</td>
+        <td>${healthy === null ? "—" : `<span class="mbar" style="--sw:${colour(n)}"><i style="width:${
+          ((healthy / NDRAWS) * 100).toFixed(0)}%"></i></span>${Math.round((healthy / NDRAWS) * 100)}%`}</td>
         <td>${p.slot}${p.tier || "—"}</td>
         <td>${signed(p.vorp)}</td>
       </tr>`;
@@ -1090,7 +1119,10 @@ footer b { color: var(--slate); font-weight: 600; }
         </div>
         <div>
           <h3>Each scoring category</h3>
-          <table class="cmp">
+          ${catRows === "" ? `<p class="cmp-hint">Goalies and skaters do not share
+            scoring categories, so a mixed selection has no category table. The
+            point totals above are comparable - both are fantasy points.</p>` : ""}
+          <table class="cmp" ${catRows === "" ? "hidden" : ""}>
             <thead><tr><th class="lead" rowspan="2">Category</th>${catHead}</tr>
               <tr>${catSub}</tr></thead>
             <tbody>${catRows}</tbody>
@@ -1125,21 +1157,33 @@ footer b { color: var(--slate); font-weight: 600; }
     }).join("");
     const mx = ((p.m - lo) / (hi - lo || 1)) * W;
 
-    const catRows = CATS.map((c) => {
-      const [mean, flo, cei] = p.cat[c];
-      const w = DATA.weights[c] || 0;
-      return `<tr>
-        <td>${DATA.catLabels[c]}</td>
-        <td class="v">${c === "plus_minus" ? signed(mean) : fmt1(mean)}</td>
-        <td class="r">${c === "plus_minus" ? signed(flo) : fmt0(flo)} – ${c === "plus_minus" ? signed(cei) : fmt0(cei)}</td>
-        <td class="w">${fmt0(mean * w)}</td>
-      </tr>`;
-    }).join("");
+    const catRows = isGoalie(p)
+      ? (DATA.goalieCats || []).map((c) => {
+          const mean = p.gcat[c];
+          const w = (DATA.goalieWeights || {})[c] || 0;
+          return `<tr>
+            <td>${DATA.goalieCatLabels[c]}</td>
+            <td class="v">${fmt1(mean)}</td>
+            <td class="r"></td>
+            <td class="w">${fmt0(mean * w)}</td>
+          </tr>`;
+        }).join("")
+      : CATS.map((c) => {
+          const [mean, flo, cei] = p.cat[c];
+          const w = DATA.weights[c] || 0;
+          return `<tr>
+            <td>${DATA.catLabels[c]}</td>
+            <td class="v">${c === "plus_minus" ? signed(mean) : fmt1(mean)}</td>
+            <td class="r">${c === "plus_minus" ? signed(flo) : fmt0(flo)} – ${c === "plus_minus" ? signed(cei) : fmt0(cei)}</td>
+            <td class="w">${fmt0(mean * w)}</td>
+          </tr>`;
+        }).join("");
 
     el.innerHTML = `
       <h2>${eligible(p).join("/")} ${p.tier ? "tier " + p.tier : ""} · ${p.t}</h2>
       <div class="who"><h3>${p.n}</h3><span class="num">${fmt0(p.m)}</span></div>
-      <div class="whosub">${p.a} years old · ${fmt0(p.g)} of ${DATA.gamesInSeason} games expected ·
+      <div class="whosub">${p.a == null ? "" : p.a + " years old · "}${
+        fmt0(p.g)} ${isGoalie(p) ? "starts" : "of " + DATA.gamesInSeason + " games"} expected ·
         value ${signed(p.vorp)} over replacement</div>
       <svg class="dist" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
         ${bars}
@@ -1351,7 +1395,7 @@ footer b { color: var(--slate); font-weight: 600; }
       "rank,player,eligible,slot,team,age,points,floor,p20,p80,ceiling,value,expected_games";
     const lines = state.mine.map((i, n) => {
       const p = P[i];
-      return [n + 1, `"${p.n}"`, `"${eligible(p).join("/")}"`, p.slot, p.t, p.a, fmt0(p.m), fmt0(p.f), fmt0(p.l),
+      return [n + 1, `"${p.n}"`, `"${eligible(p).join("/")}"`, p.slot, p.t, p.a ?? "", fmt0(p.m), fmt0(p.f), fmt0(p.l),
               fmt0(p.h), fmt0(p.c), Math.round(p.vorp), fmt0(p.g)].join(",");
     });
     const csv = [header, ...lines].join("\n");

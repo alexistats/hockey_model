@@ -34,6 +34,9 @@ logger = logging.getLogger(__name__)
 
 N_TEAMS = 14
 
+# What a goalie scores in, as written by hockey.model.goalie_forecast.
+GOALIE_COLUMNS = ("exp_starts", "exp_wins", "exp_saves", "exp_ga", "exp_shutouts", "save_pct")
+
 
 def load_draws(out: Path) -> tuple[list[int], np.ndarray]:
     """Fantasy-point draws for every player, and the ids they belong to.
@@ -94,7 +97,14 @@ def merge_goalies(
     for column in board.columns:
         if column not in rows:
             rows[column] = np.nan
-    merged = pd.concat([board, rows[board.columns]], ignore_index=True)
+    # Carry the goalie-only columns through rather than projecting onto the
+    # skater board's shape. The draft page needs them to show a goalie's own
+    # categories, and a skater's NaN in "exp_wins" is honestly an absence.
+    keep = [*board.columns, *(c for c in GOALIE_COLUMNS if c in rows)]
+    for column in keep:
+        if column not in board:
+            board[column] = np.nan
+    merged = pd.concat([board[keep], rows[keep]], ignore_index=True)
     return merged, goalie_ids, goalie_draws
 
 

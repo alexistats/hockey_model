@@ -50,6 +50,25 @@ LABELS = {
 }
 ORDER = ("goals", "assists", "ppp", "shp", "sog", "hits", "blocks", "plus_minus")
 
+# Goalies score in a different currency. They get their own row set rather than
+# zeros in the skaters' categories, because a zero in "hits" reads as a
+# measurement and is really an absence.
+GOALIE_LABELS = {
+    "games_started": "Starts",
+    "wins": "Wins",
+    "saves": "Saves",
+    "goals_against": "Goals against",
+    "shutouts": "Shutouts",
+}
+GOALIE_ORDER = ("games_started", "wins", "saves", "goals_against", "shutouts")
+GOALIE_COLUMNS = {
+    "games_started": "exp_starts",
+    "wins": "exp_wins",
+    "saves": "exp_saves",
+    "goals_against": "exp_ga",
+    "shutouts": "exp_shutouts",
+}
+
 
 def scoring_weights() -> dict[str, float]:
     """Fantasy points per unit of each category, read from the league config
@@ -99,6 +118,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="build_draft_ui")
     parser.add_argument("directory")
     parser.add_argument("--out", default="artifacts/ui/draft_board.html")
+    parser.add_argument(
+        "--goalies", default=None, help="a goalie board directory, for the goalie draws"
+    )
     args = parser.parse_args()
 
     out = Path(args.directory)
@@ -114,27 +136,72 @@ def main() -> None:
     if not eligibility:
         print("warning: no eligibility file; the page will use NHL primary positions")
 
-    ids = [int(p) for p in board["player_id"]]
+    # Goalies reach this file already merged into value_board.csv by the export,
+    # so they are ranked and tiered; what they still need is their draws. They
+    # come from a separate fit and a separate file, and because the board is
+    # sorted by value they are interleaved among the skaters rather than sitting
+    # at the end.
+    goalie_draws_by_id: dict[int, np.ndarray] = {}
+    if args.goalies:
+        with np.load(Path(args.goalies) / "goalie_draws.npz") as f:
+            for k, gid in enumerate(f["player_ids"]):
+                goalie_draws_by_id[int(gid)] = f["draws"][:, k]
+
+    is_goalie = [str(slot) == "G" for slot in board["slot"]]
+    skater_rows = [n for n, g in enumerate(is_goalie) if not g]
+    skater_ids = [int(board["player_id"].iloc[n]) for n in skater_rows]
+    missing = [
+        int(board["player_id"].iloc[n])
+        for n, g in enumerate(is_goalie)
+        if g and int(board["player_id"].iloc[n]) not in goalie_draws_by_id
+    ]
+    if missing:
+        raise SystemExit(
+            f"{len(missing)} goalie(s) on the board have no draws, first {missing[:3]}. "
+            f"Pass --goalies pointing at the directory the goalie board came from."
+        )
+
     # The categories and games played travel too, so the comparison panel can
     # answer "is his shot volume actually higher" from the posterior rather than
     # from two point estimates that cannot say how often it is true.
     wanted = ("draws", "games_played", *(f"stat_{k}" for k in ORDER))
-    loaded = load_draws(out, ids, rng, wanted)
+    loaded = load_draws(out, skater_ids, rng, wanted)
     by_name = dict(zip(wanted, loaded, strict=True))
+    n_draws = by_name["draws"].shape[0]
 
-    draws = by_name["draws"]
+    # Totals cover everyone, in board order, so the page can slice by row index.
+    totals = np.zeros((n_draws, len(board)), dtype="float32")
+    totals[:, skater_rows] = by_name["draws"]
+    for n, g in enumerate(is_goalie):
+        if not g:
+            continue
+        column = goalie_draws_by_id[int(board["player_id"].iloc[n])]
+        if len(column) < n_draws:
+            raise SystemExit(
+                f"the goalie posterior has {len(column)} draws and the skater "
+                f"posterior {n_draws}; refit so the two match rather than padding one"
+            )
+        totals[:, n] = column[rng.choice(len(column), size=n_draws, replace=False)]
+
     # int16 holds every plausible fantasy total and halves what the page carries.
     # Column-major: each player's draws contiguous, which is what the page slices.
-    blob = pack(draws, "fantasy totals")
+    blob = pack(totals, "fantasy totals")
     games_blob = pack(by_name["games_played"], "games played")
     # One array per category, concatenated in ORDER, so the page finds a
-    # player's category draws at ((category * nPlayers) + player) * nDraws.
+    # player's category draws at ((category * nSkaters) + k) * nDraws. `catIndex`
+    # maps a board row to its k, and -1 for a goalie: the skater arrays stay
+    # skater-sized rather than being padded with zeros a reader could mistake for
+    # measurements, and the board is sorted by value so goalies are interleaved.
     cat_blob = pack(np.concatenate([by_name[f"stat_{k}"] for k in ORDER], axis=1), "categories")
+    cat_index = [-1] * len(board)
+    for k, n in enumerate(skater_rows):
+        cat_index[n] = k
 
     players = []
     for n, row in enumerate(board.itertuples()):
         pid = int(row.player_id)
-        c = cats.loc[pid]
+        goalie = is_goalie[n]
+        c = None if goalie else cats.loc[pid]
         players.append(
             {
                 "i": n,
@@ -146,21 +213,32 @@ def main() -> None:
                 "p": getattr(row, "slot", row.position),
                 "e": list(eligibility.get(pid, (getattr(row, "slot", row.position),))),
                 "t": row.team,
-                "a": int(row.age),
+                # Goalies carry no age: the aging curve is measured on skaters
+                # and was never fitted for them, so there is nothing to show.
+                "a": None if pd.isna(row.age) else int(row.age),
                 "m": round(float(row.mean), 1),
                 "f": round(float(row.floor), 1),
                 "l": round(float(row.p20), 1),
                 "h": round(float(row.p80), 1),
                 "c": round(float(row.ceiling), 1),
                 "g": round(float(row.exp_games), 1),
-                "cat": {
-                    k: [
-                        round(float(c[k]), 2),
-                        round(float(c[f"{k}_floor"]), 1),
-                        round(float(c[f"{k}_ceiling"]), 1),
-                    ]
-                    for k in ORDER
-                },
+                "cat": (
+                    None
+                    if goalie
+                    else {
+                        k: [
+                            round(float(c[k]), 2),
+                            round(float(c[f"{k}_floor"]), 1),
+                            round(float(c[f"{k}_ceiling"]), 1),
+                        ]
+                        for k in ORDER
+                    }
+                ),
+                "gcat": (
+                    {k: round(float(getattr(row, GOALIE_COLUMNS[k])), 1) for k in GOALIE_ORDER}
+                    if goalie
+                    else None
+                ),
             }
         )
 
@@ -172,14 +250,18 @@ def main() -> None:
     shape = {r["position"]: int(r["count"]) for r in roster if r.get("starting")}
     bench = sum(int(r["count"]) for r in roster if r["position"] == "BN")
     slot_column = "slot" if "slot" in board else "position"
-    positions = sorted(set(board[slot_column]), key=lambda p: ("C", "LW", "RW", "D").index(p))
+    # Goalies last, because that is the order a roster is read in and the order
+    # the position cards should sit in.
+    order = ("C", "LW", "RW", "D", "G")
+    positions = sorted(set(board[slot_column]), key=order.index)
     diagnostics = pd.read_csv(out / "diagnostics.csv")
     worst = float(diagnostics["worst_rhat"].max())
 
     payload = {
         "kicker": (
             f"{season_label(PROJECTION_SEASON)} · {N_TEAMS}-team head-to-head points · "
-            f"{len(players)} skaters"
+            f"{len(players) - sum(is_goalie)} skaters"
+            + (f" · {sum(is_goalie)} goalies" if any(is_goalie) else "")
         ),
         "gamesInSeason": SEASON_LENGTH[PROJECTION_SEASON],
         "positions": positions,
@@ -192,36 +274,50 @@ def main() -> None:
         "cats": list(ORDER),
         "catLabels": LABELS,
         "weights": weights,
-        "nDraws": draws.shape[0],
+        "nDraws": n_draws,
         "draws": blob,
         "catDraws": cat_blob,
+        "catIndex": cat_index,
         "gamesDraws": games_blob,
+        "goalieCats": list(GOALIE_ORDER),
+        "goalieCatLabels": GOALIE_LABELS,
+        "goalieWeights": {r.key: r.modifier for r in load_scoring_from_yaml().goalie_rules},
         "players": players,
         "footnote": (
-            f"<b>How to read this.</b> Every number is a posterior from a hierarchical "
-            f"Bayesian model fitted on eight seasons of game logs, not a point projection. "
-            f"The bar spans the 10th to 90th percentile of a player's season; the solid part "
-            f"is the middle three-fifths and the tick is the mean. <b>Value</b> is points "
-            f"above the replacement player at that position, and it moves as the board "
-            f"empties, because a pick is worth the gap to whoever else would fill the slot. "
-            f"<b>Tiers</b> break where the next player's chance of outscoring the one who "
-            f"opened the tier falls below 40 percent, so they follow the distributions "
-            f"rather than the point gaps. <b>Positions are Yahoo eligibility</b>, "
-            f"transcribed from the league's player list, so a player listed at two "
-            f"counts at both. Each is valued at the scarcest slot they can fill, and "
-            f"replacement level is set by filling the league's slots best-first and "
-            f"reading off whoever is left - the pools overlap, so counting each "
-            f"separately would make every position look deeper than it is. "
-            f"<b>What is left</b> counts the players still "
-            f"available in each band, each in one slot so the totals are real, while "
-            f"the cards above count everyone eligible and so overlap. "
-            f"Tiers are struck within a position, so a tier 4 "
-            f"defenceman and a tier 4 centre are not the same player; value bands are the "
-            f"comparable read, because replacement level is already per position. "
-            f"<b>Value if I wait</b> assumes the next picks come off the top of the value "
-            f"board - the room will not do exactly that, so read it as the direction and "
-            f"rough size of the cost, not a forecast. Goalies are not "
-            f"modelled yet. Fitted {date.today():%d %B %Y}, worst batch r-hat {worst:.4f}."
+            "<b>How to read this.</b> Every number is a posterior from a hierarchical "
+            "Bayesian model fitted on eight seasons of game logs, not a point projection. "
+            "The bar spans the 10th to 90th percentile of a player's season; the solid part "
+            "is the middle three-fifths and the tick is the mean. <b>Value</b> is points "
+            "above the replacement player at that position, and it moves as the board "
+            "empties, because a pick is worth the gap to whoever else would fill the slot. "
+            "<b>Tiers</b> break where the next player's chance of outscoring the one who "
+            "opened the tier falls below 40 percent, so they follow the distributions "
+            "rather than the point gaps. <b>Positions are Yahoo eligibility</b>, "
+            "transcribed from the league's player list, so a player listed at two "
+            "counts at both. Each is valued at the scarcest slot they can fill, and "
+            "replacement level is set by filling the league's slots best-first and "
+            "reading off whoever is left - the pools overlap, so counting each "
+            "separately would make every position look deeper than it is. "
+            "<b>What is left</b> counts the players still "
+            "available in each band, each in one slot so the totals are real, while "
+            "the cards above count everyone eligible and so overlap. "
+            "Tiers are struck within a position, so a tier 4 "
+            "defenceman and a tier 4 centre are not the same player; value bands are the "
+            "comparable read, because replacement level is already per position. "
+            "<b>Value if I wait</b> assumes the next picks come off the top of the value "
+            "board - the room will not do exactly that, so read it as the direction and "
+            "rough size of the cost, not a forecast. "
+            + (
+                "<b>Goalies</b> come from a separate model and a separate fit, so their "
+                "draws are independent of the skaters' - which is exactly what makes "
+                "comparing the two legitimate. They are valued against the goalie slots "
+                "the same way everyone else is valued against theirs, but they carry no "
+                "age, because the aging curve is measured on skaters, and no per-category "
+                "probabilities, because only their point totals were saved. "
+                if any(is_goalie)
+                else "Goalies are not modelled on this board. "
+            )
+            + f"Fitted {date.today():%d %B %Y}, worst batch r-hat {worst:.4f}."
         ),
     }
 
@@ -232,7 +328,7 @@ def main() -> None:
     destination.write_text(page, encoding="utf-8")
     print(
         f"wrote {destination} ({len(page) / 1e6:.2f} MB) "
-        f"with {len(players)} players and {draws.shape[0]} draws each"
+        f"with {len(players)} players and {n_draws} draws each"
     )
 
 
