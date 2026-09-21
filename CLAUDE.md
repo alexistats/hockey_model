@@ -35,6 +35,9 @@ It feeds a separate draft-bot project. It is not that project.
 - `src/hockey/features/` - warehouse to modelling panel
 - `src/hockey/model/` - the PyMC model, and the forecast that reads its posterior
 - `src/hockey/calibration/` - posterior predictive checks, CRPS, backtests
+- `src/hockey/serve/` - the draft-day HTTP API the bot drives. Holds the live
+  draft state and re-reads the posterior against it. **Nothing here may change
+  a posterior either**; it is the export layer with a socket on it.
 - `src/hockey/export/` - the posterior read as a draft board. `draft.py` scores
   draws into fantasy points; `replacement.py` re-reads the same posterior
   against the league's roster shape. **Nothing here may change a posterior.**
@@ -61,6 +64,7 @@ python -m hockey.model.run_staged --pool 300  # the draft board, ~20 min
 python -m hockey.model.run_goalies            # the goalie board, ~15 min
 python -m hockey.export artifacts/board_v2    # replacement level, value, tiers
 python scripts/build_draft_ui.py artifacts/board_v2   # the single-file draft page
+python -m hockey.serve --board artifacts/board_v3 \n    --goalies artifacts/goalies_v2 --slot 8           # the draft-day API, port 8899
 
 pytest
 ruff check . && ruff format --check .
