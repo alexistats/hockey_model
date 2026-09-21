@@ -115,6 +115,7 @@ def replacement_levels(
     rows = []
     for position in sorted(slots):
         free = leftover[[position in _eligible(r, r.position) for r in leftover.itertuples()]]
+        extrapolated = free.empty
         if free.empty:
             # Every eligible player was absorbed, so the baseline would have to
             # be extrapolated past the end of the pool. Say so rather than
@@ -135,6 +136,13 @@ def replacement_levels(
                 "drafted": len(filled),
                 "pool": len(filled) + len(free),
                 "replacement": float(head[column].mean()),
+                # True when the pool ran out before replacement, so the baseline
+                # is the tail of what exists rather than the next player off the
+                # board. Value at this position is then a LOWER bound and real
+                # scarcity is higher. This happens routinely late in a draft, and
+                # a consumer that cannot tell the two cases apart is reading a
+                # number that quietly changes meaning as the board empties.
+                "extrapolated": bool(extrapolated),
                 "starter_cutoff": (
                     float(starters[column].min()) if len(starters) else float(head[column].mean())
                 ),

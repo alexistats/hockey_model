@@ -21,6 +21,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The draft-day API. Split out because the model, the warehouse and every test
+# in this project run without a web server, and only the bot needs one.
+serve = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+]
+
 # The sampler. Split out so the warehouse can be built and tested without
 # waiting on the JAX/PyMC install.
 model = [
