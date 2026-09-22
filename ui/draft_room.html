@@ -167,6 +167,8 @@ table.grid col.dim { background: var(--well); }
 .needs .cost b { display: block; font-size: 13px; font-weight: 600; color: var(--ink); }
 .needs li.urgent .cost b { color: var(--red); }
 .needs li.full { opacity: .45; }
+.needs .who { flex: 1 1 auto; min-width: 0; font-size: 11.5px; color: var(--slate); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.needs li.bench .who { color: var(--faint); }
 
 .waitset { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--faint); }
 .waitset input { width: 46px; font: inherit; font-family: var(--mono); color: var(--ink); background: var(--surface); border: 1px solid var(--edge); border-radius: 3px; padding: 2px 5px; text-align: right; }
@@ -861,14 +863,52 @@ footer b { color: var(--slate); font-weight: 600; }
   // move, so a column means the same thing at pick 1 and pick 120.
   const struckAt = (pos) => P.filter((p) => p.tslot === pos && !state.gone.has(p.i));
 
-  // Starting slots I have not filled yet. Bench is positionless, so it is not
-  // a need at any one position - it is depth, counted separately.
-  function myNeeds() {
+  // My roster, assigned to my slots the way the league assigns a roster: best
+  // first, into an open slot the player is eligible for, preferring the slot
+  // with the most room.
+  //
+  // Counting each player's *valued* slot instead - which this did - is wrong in
+  // both directions and reads badly on the page: a C/LW valued at left wing
+  // showed up as a third left winger while centre looked empty, so a complete
+  // roster looked lopsided and the needs panel asked for positions I had
+  // covered. Same rule as the API's assign_roster, and as `fill_slots`, which is
+  // where the rule belongs.
+  function myLineup() {
+    const openings = {};
+    for (const pos of SHAPE()) openings[pos] = DATA.rosterShape[pos];
+    const assigned = new Map();
+    const bench = [];
+    for (const i of [...state.roster].sort((a, b) => P[b].m - P[a].m)) {
+      const open = eligible(P[i]).filter((pos) => openings[pos] > 0);
+      if (!open.length) { bench.push(i); continue; }
+      const pick = open.reduce((a, b) => (openings[b] > openings[a] ? b : a));
+      openings[pick]--;
+      assigned.set(i, pick);
+    }
     const filled = {};
-    for (const i of state.roster) filled[P[i].slot] = (filled[P[i].slot] || 0) + 1;
-    const out = {};
-    for (const pos of SHAPE()) out[pos] = Math.max(0, DATA.rosterShape[pos] - (filled[pos] || 0));
-    return { filled, need: out };
+    for (const pos of assigned.values()) filled[pos] = (filled[pos] || 0) + 1;
+    const need = {};
+    for (const pos of SHAPE()) need[pos] = Math.max(0, DATA.rosterShape[pos] - (filled[pos] || 0));
+    return { assigned, bench, filled, need };
+  }
+
+  function myNeeds() {
+    const { filled, need } = myLineup();
+    return { filled, need };
+  }
+
+  // How much room is left to defer a starting slot. The same count the API's
+  // roster_pressure reports: value alone cannot see that the draft ends, and an
+  // unfilled starting slot scores zero all season.
+  function pressureOf(need) {
+    const rounds = state.rounds || (Object.values(DATA.rosterShape).reduce((a, b) => a + b, 0)
+                                    + (DATA.bench || 0));
+    const picksLeft = Math.max(0, rounds - state.roster.length);
+    const slotsOpen = SHAPE().reduce((n, pos) => n + need[pos], 0);
+    const slack = picksLeft - slotsOpen;
+    const base = (DATA.rules && DATA.rules.need_first_margin) || 25;
+    const margin = slotsOpen === 0 ? base : slack <= 0 ? null : base * picksLeft / slack;
+    return { picksLeft, slotsOpen, slack, margin };
   }
 
   // What a position costs me if I pass on it now. The next `picks` picks are
@@ -994,12 +1034,16 @@ footer b { color: var(--slate); font-weight: 600; }
       : `<span>No picks marked yet — hit ✕ as players go, + for your own.</span>`;
 
     /* my roster and the cost of passing */
+    const lineup = myLineup();
+    const namesAt = {};
+    for (const [i, pos] of lineup.assigned) (namesAt[pos] ||= []).push(P[i].n);
     document.getElementById("needs").innerHTML = positions.map((pos) => {
       const have = filled[pos] || 0;
       const slots = DATA.rosterShape[pos];
       const c = cost[pos];
       const pips = Array.from({ length: Math.max(slots, have) }, (_, k) =>
         `<span class="pip ${k < have ? "on" : ""} ${k >= slots ? "bn" : ""}"></span>`).join("");
+      const who = (namesAt[pos] || []).map((n) => n.split(" ").slice(1).join(" ") || n).join(", ");
       const urgent = need[pos] > 0 && !(pos === "G" && gBlock) && c.cost !== null &&
         c.cost >= (DATA.urgent ?? 20);
       // A cost of zero is a real answer, not a missing one: the player I would
@@ -1009,15 +1053,22 @@ footer b { color: var(--slate); font-weight: 600; }
       return `<li class="${need[pos] ? "" : "full"} ${urgent ? "urgent" : ""}">
         <span class="pos">${pos}</span>
         <span class="pips">${pips}</span>
+        <span class="who">${who || "&mdash;"}</span>
         <span class="cost"><b>${shown}</b>value if I wait</span>
       </li>`;
-    }).join("");
+    }).join("")
+      + (lineup.bench.length
+        ? `<li class="full bench"><span class="pos">BN</span><span class="pips"></span>
+           <span class="who">${lineup.bench.map((i) => P[i].n.split(" ").slice(1).join(" ")).join(", ")}</span>
+           <span class="cost"><b>${lineup.bench.length}</b>bench</span></li>`
+        : "");
 
     /* the read */
     // The same call the draft API returns as `positional_read`: only open
     // slots at positions a rule lets me take now, ranked by what passing costs,
     // and even a lone position has to clear the bar.
     const bar = DATA.noClearCall ?? 8;
+    const press = pressureOf(need);
     const blocked = (p) => p === "G" && gBlock;
     const open = positions.filter((p) => need[p] > 0 && !blocked(p) && cost[p].cost !== null);
     const held = positions.filter((p) => need[p] > 0 && blocked(p));
@@ -1028,6 +1079,25 @@ footer b { color: var(--slate); font-weight: 600; }
       .sort((a, b) => b.rs - a.rs)[0];
     const topLine = top ? ` Top score left: <b>${top.n}</b>.` : "";
     const el = document.getElementById("verdict");
+    const fillsNeed = (p) => eligible(p).some((pos) => need[pos] > 0);
+    const pressLine = press.slotsOpen
+      ? ` <span class="held">(${press.picksLeft} pick${press.picksLeft === 1 ? "" : "s"} left for
+          ${press.slotsOpen} open slot${press.slotsOpen === 1 ? "" : "s"}.)</span>`
+      : "";
+    // No slack: every remaining pick is claimed by a slot that would otherwise
+    // score nothing all season, and no gap in points buys one back. Ahead of the
+    // reach below, which is a value argument and cannot see the draft ending.
+    if (press.margin === null) {
+      const filler = P.filter((p) => !state.gone.has(p.i) && fillsNeed(p)
+                                     && !(eligible(p).includes("G") && gBlock))
+                      .sort((a, b) => b.rs - a.rs)[0];
+      if (filler) {
+        el.innerHTML = `<b>Take <span class="take">${filler.n}</span> (${
+          eligible(filler).filter((pos) => need[pos] > 0).join("/")}).</b>
+          Every remaining pick is spoken for by an open slot.` + pressLine;
+        return;
+      }
+    }
     if (!open.length) {
       el.innerHTML = (held.length
         ? `<b>Take the best score.</b> The open slots are blocked by a rule for now.`
