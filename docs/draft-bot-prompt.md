@@ -1,126 +1,139 @@
-I liked that it picked a full team, and respected the goalie draft order. However,
-the selections seem odd. It picked all forwards, then 3 goalies, then 4
-defensemen. And when I look at the picks, Cozens in the 3rd round looks
-suspicious with guys like Dahlin and Schaefer on the board, or a better forward
-like DeBrincat.
+# Brief for the draft bot
 
-I know why. I had asked for conservative picks early (floors) and higher-ceiling
-picks later, and floors and ceilings are **raw points**. Raw floors put nearly
-every defenceman below the forwards, because defencemen score fewer points.
-Raw ceilings put goalies above everyone, because goalies are the most volatile
-position. So "floors first, ceilings later" on raw numbers produces exactly
-forwards, then goalies, then defence.
-
-The idea is still right, but it has to be measured against replacement level,
-the same way VORP is. The draft server now does that for you. Please stop
-ranking players yourself and follow the procedure below.
-
-## The server
-
-The valuation runs as a local HTTP service in `hockey_models`. Do not recompute
-VORP, replacement level, tiers, risk scores or roster assignment. The server
-does all of it live against the current draft, and a second copy drifts.
+The valuation lives in `hockey_models` and is served over HTTP. Your job is to
+watch the draft page, tell the server what you see, and make the pick it
+returns. Do not rank players yourself: do not recompute value over replacement,
+replacement level, tiers, risk scores, roster assignment or schedule fit. The
+server does all of it live against the current draft, and a second copy of that
+logic drifts from this one silently.
 
     python -m hockey.serve --board artifacts/board_v3 --goalies artifacts/goalies_v2 --slot 8
 
 Base URL `http://127.0.0.1:8899`. Interactive docs at `/docs`.
 
+## The loop
+
 | Call | When | What you use |
 |---|---|---|
-| `GET /health` | once at start | `convergence` (r-hat); refuse to draft if missing |
+| `GET /health` | once at start | `convergence` (r-hat). No convergence block, no draft. |
 | `POST /draft/reset` | before a mock | clears state |
-| `POST /draft/observed` | every time the board changes | body `{"names": [...all drafted...], "mine": [...my players...]}`; check `unresolved` |
-| `GET /recommend` | my turn | everything needed to pick (below) |
+| `POST /draft/observed` | every time the board changes | `{"names": [...everyone drafted...], "mine": [...my players...]}` |
+| `GET /recommend` | my turn | `recommendation`, and everything behind it |
 | `GET /team/me` | my turn, for the log | `lineup`, `needs`, `bench` |
-| `GET /compare?ids=a,b` | optional, close calls | P(A outscores B) |
+| `GET /compare?ids=a,b` | close calls worth explaining | P(A outscores B) |
+| `POST /draft/mine` | after my pick, if the page has not shown it yet | records it |
 
 `/draft/observed` takes the **complete** list of drafted players every time, not
-the latest pick. The server works out what changed, so a missed or repeated poll
-does no harm. If `unresolved` is non-empty, **stop and ask me**. Never guess a
-player's identity, because a wrong match looks completely plausible and nothing
-downstream can catch it.
+the latest pick. The server diffs it, so a missed poll, a double poll or a
+reconnect all heal themselves. If `unresolved` comes back non-empty, **stop and
+ask a human**. Never guess an identity: a wrong id produces a complete,
+plausible projection for the wrong player and nothing downstream can detect it.
 
-## What `/recommend` returns
+## Making the pick
 
-- `candidates`: the players the rules allow, best first, ranked by `ranked_by`.
-  - With `ranked_by: "risk_score"` (the default), each player's score is
-    `(1-w)*(p20 - replacement) + w*(p80 - replacement)`, where `w` is
-    `risk_weight`. The weight goes from 0.2 in round 1 (cautious) to 0.8 in the
-    last round (upside), so this is my floor-to-ceiling strategy measured
-    against replacement.
-  - Each candidate also carries `vorp`, `mean`, `p20`, `p80`, `floor`,
-    `ceiling`, `tier`, `fills_a_need`, `beats_next`, `notes`,
-    `replacement_is_lower_bound` and `replacement_free_below`.
-  - `/recommend` returns 6 candidates by default. Pass `?limit=10` when you want
-    a wider field to reason about; it costs nothing.
-- `positional_read`: whether a position is emptying out before my next turn.
-  - `call` is one of `"position"`, `"no_clear_call"` or `"best_available"`.
-  - When `call` is `"position"`, `position` and `take` name the best player the
-    rules allow at that position.
-  - It also carries `reason`, `open_costs` and `urgent`. Positions a rule blocks
-    right now are already excluded.
-- `cost_of_waiting`: for each position, the best value now against the best
-  expected after the picks before my next turn.
-- `blocked_by_rules` and `rule_cost`: who a goalie rule stopped me from taking,
-  and what that cost.
+**Take `recommendation.player_id`.** That is the whole rule.
 
-The goalie rules are enforced by the server, not by you:
-- first goalie from round 7,
-- second from round 14,
-- at most 3 goalies in total.
+It already applies, in this order: a position draining fast enough to reach for,
+then an open starting slot, then the job the plan gave this pick, then the best
+score. `recommendation.why` names which rule fired, and `detail` says why.
 
-## How to choose a pick
+Do not re-rank the candidates. Do not add a positional preference. Do not pick
+by raw floor, ceiling, mean or tier.
 
-1. **Sync.** `POST /draft/observed` with everything visible on the board. Stop
-   if anything is unresolved.
-2. **Read.** `GET /recommend`.
-3. **Decide:**
-   - If `positional_read.call == "position"` and `take` is not null, take
-     `take`. That position is losing value fast enough to be worth reaching for.
-   - Otherwise take `candidates[0]`.
+**Deviate only by asking a human, never silently.** Worth raising: a candidate
+whose notes say its value is a lower bound; a `beats_next` under 0.55, which is
+close to a coin flip; a recommendation carrying an `injury`.
 
-   That is the whole rule. Do not add a positional preference of your own, do
-   not fill positions in roster order, and do not re-rank candidates by raw
-   floor, ceiling or mean.
-4. **Record.** If the draft page has not reflected my pick by the next poll,
-   `POST /draft/mine` with the `player_id`.
+## What is in the response, and what it means
 
-You may deviate only to ask me, never silently. If something looks wrong, say
-so. Examples: a candidate's notes say its value is a lower bound, or a player's
-`fills_a_need` is false while another candidate's is true and they are close.
+- **`recommendation`** - `player_id`, `player`, `why`, `detail`. Take it.
+- **`candidates`** - six by default, best first, ranked by `ranked_by`. Pass
+  `?limit=10` for a wider field; it costs nothing.
+  - `risk_score` is the ranking number: `(1-w)*(p20 - replacement) + w*(p80 -
+    replacement)`, with `w` = `risk_weight` ramping 0.2 in round 1 to 0.8 in the
+    last. Cautious early, ambitious late, both measured against replacement so
+    positions stay comparable.
+  - Also `vorp`, `mean`, `p20`, `p80`, `floor`, `ceiling`, `tier`,
+    `fills_a_need`, `need_slot`, `beats_next`, `notes`,
+    `replacement_is_lower_bound`, `replacement_free_below`, `injury`,
+    `schedule_opening`, `schedule_season`.
+- **`plan`** - `pick_kind` is `starter`, `ceiling`, `schedule` or `bench`, with
+  `picks_left`. Starting slots come first; once they are full the last five
+  picks are planned, and the final two go to schedule fit.
+- **`positional_read`** - `call` is `position`, `no_clear_call` or
+  `best_available`. Positions blocked by a rule are already excluded.
+- **`cost_of_waiting`** - per position, the best available now against the best
+  expected at my next turn.
+- **`blocked_by_rules`** and **`rule_cost`** - who a goalie rule stopped, and
+  what it cost. Log `rule_cost` whenever it is non-null.
+- **`context`** - what draft-day data the board carries (schedule span, weeks,
+  injury sync date). If `schedule` is missing, the schedule fields will be null
+  and you should say so rather than treat them as zero.
+
+Goalie rules are enforced server-side: first goalie from round 7, second from
+round 14, three at most.
+
+## The strategy, so you can explain it at the table
+
+**Starting slots before bench depth.** A candidate who fills an open slot beats
+one who does not unless the bench player's score is more than 25 higher. This is
+the anti-logjam rule: one defenceman and then forwards all night leaves the blue
+line to be drafted from whatever is left in the last rounds. When a bench player
+does win, `why` is `best score, need overridden` and `detail` gives the gap, so
+the exception is visible rather than silent.
+
+**Positional reach.** When passing on a position costs at least 8 more than the
+next open one, take the best player there instead of the best overall.
+
+**The last five picks have jobs.** Three swing for the ceiling, where a bust
+costs a waiver claim. The final two are schedule picks.
+
+**Schedule means starts, not games.** `schedule_opening` counts the nights in
+the opening two weeks (29 Sept - 11 Oct 2026; week 1 is short) where the player
+would actually be in my lineup, filling each night's roster best-first against
+the players I already hold. A fourth centre whose games land on nights my first
+three already cover starts nothing and is worth nothing that fortnight.
+`schedule_season` asks the same over the whole season, which is the right
+question for a third centre or fifth defenceman. Each carries `games`, `starts`,
+`blocked` and `start_share`.
+
+**Injuries are flagged, not banned.** `injury` carries the ESPN status and when
+it was synced. A player who cannot play is skipped for a schedule pick, because
+starts are the entire point of that pick. Everywhere else it is reported and the
+human decides: the league has two IR slots, so an injured player can be a fine
+pick. The ESPN feed matches on name and a few players never match, so a missing
+flag is not proof of fitness.
 
 ## Things that will mislead you
 
-- **Never add up VORP or risk scores across a roster.** Each player's value
-  assumes their best eligible slot, so flexible players are counted twice. Use
-  `team/me.lineup` to see a roster.
-- `projected_points` in `/team/me` is a plain sum of means, bench included. It is
-  not a lineup score.
+- **Never add up `vorp` or `risk_score` across a roster.** Each player's value
+  assumes his best eligible slot, so flexible players are double-counted. Read a
+  roster from `team/me.lineup`.
+- `projected_points` is a plain sum of means, bench included. Not a lineup score.
 - `cost_of_waiting` assumes the room drafts straight down the value board. It is
-  a direction and rough size, not a forecast.
-- **A small edge at a position whose pool has run dry is not an edge.**
-  `replacement_free_below` says how many genuinely available players set that
-  position's baseline. Centre runs dry around pick 40 in this league, because 42
-  slots are chasing about 51 centre-eligible players. When it is under 6,
-  `replacement_is_lower_bound` is true, the value is understated by an unknown
-  amount, and a few points of difference against a candidate at a healthy
-  position is noise. Say so rather than treating the ordering as real.
-- **Tier is not part of the score, and is not comparable across positions.**
-  Tiers are struck within a position on raw points, so a tier-5 centre and a
-  tier-2 winger are not on one scale; the score already handles cross-position
-  comparison. Worth reporting when a low-tier player outranks a high-tier one,
-  never worth overriding the order for.
+  a direction and a rough size, not a forecast.
+- **A small edge at a position whose pool has run dry is not an edge.** Centre
+  runs out of freely available players around pick 40 in this league: 42 slots
+  against about 51 centre-eligible players. When `replacement_free_below` is
+  under 6, `replacement_is_lower_bound` is true and the value is understated by
+  an unknown amount.
+- **Tiers are struck within a position** on raw points, so a tier-5 centre and a
+  tier-2 winger are not on one scale. Report it, never override the order for it.
+- **Schedule numbers move as my roster fills.** They are computed against the
+  roster at the moment you ask. Re-read `/recommend` before every pick rather
+  than planning the last five in advance.
 
 ## Log every pick
 
-One line per pick, so a mock can be audited afterwards:
+    R16 #217  took Jake Neighbours (LW)  score 95  w 0.76
+              why: plan -> schedule — 5 of 5 games in the opening weeks are starts
+              plan: schedule, 2 picks left     season: 68/84 starts
+              runners-up: Tolvanen 102, Matheson 99
+              rule_cost: none     injury: none
 
-    R3 #36  took Matthew Schaefer (D)  vorp 204  score 177  w 0.28
-            why: candidates[0]  (positional_read: no_clear_call - "passing on D costs about 26 and on C about 21; ...")
-            next best: DeBrincat 187, Johnston 181
-            rule_cost: none
+`why` must be one of: `positional_read -> <pos>`, `needs first -> <pos>`,
+`best score, need overridden`, `plan -> schedule`, `plan -> ceiling`, or
+`best score`. Anything else is a bug in the bot, not a judgement call: report it
+rather than keep the pick.
 
-`why` must be either `candidates[0]` or `positional_read -> <position>`. Anything
-else is a bug. Report it rather than keep the pick.
-
-After the next mock, send me the full log.
+Send the full log after each mock.
