@@ -26,6 +26,7 @@ from hockey.export import (
     scarcity,
     tiers,
 )
+from hockey.export.context import write_draft_context
 from hockey.seasons import PROJECTION_SEASON
 from hockey.yahoo.eligibility import load_csv as load_eligibility
 from hockey.yahoo.settings import load_roster_from_yaml
@@ -209,6 +210,13 @@ def main() -> None:
     columns = ["player", "position", "team", "age", "mean", "vorp", "pos_rank", "tier"]
     print(valued.head(25)[columns].round(1).to_string(index=False))
     print(f"\nwrote {out}/value_board.csv, replacement_levels.csv and scarcity.csv")
+
+    # The calendar and the injury list, so the draft-day server never needs a
+    # database. Absent rather than empty when the warehouse is down: every
+    # consumer checks, and a board that cannot answer a schedule question should
+    # say so rather than answer it with zeros.
+    if write_draft_context(out):
+        print(f"wrote {out}/schedule.csv, weeks.csv and injuries.csv")
 
 
 if __name__ == "__main__":

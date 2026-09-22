@@ -11,7 +11,7 @@ visible in a diff.
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -207,6 +207,31 @@ def load_scoring_from_yaml(path: Path | str = DEFAULT_CONFIG):
 def load_roster_from_yaml(path: Path | str = DEFAULT_CONFIG) -> list[dict]:
     payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     return payload["roster_positions"]
+
+
+def load_weeks_from_yaml(path: Path | str = DEFAULT_CONFIG, count: int = 30) -> list[dict]:
+    """The league's scoring weeks, from week 1's transcribed boundaries.
+
+    Yahoo is the authority and this is not it: the league API has been answering
+    403, so week 1 comes from the config and the rest are Monday-to-Sunday from
+    there. Week 1 is short whenever the season opens midweek - 29 September 2026
+    is a Tuesday, so it runs six days - and deriving the weeks from that anchor
+    is what keeps "the first two weeks" meaning the league's fortnight rather
+    than an arbitrary fourteen days.
+    """
+    payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    block = payload.get("weeks")
+    if not block:
+        return []
+    start, end = block["first_start"], block["first_end"]
+    weeks = [{"week": 1, "start": start.isoformat(), "end": end.isoformat()}]
+    cursor = end
+    for n in range(2, count + 1):
+        opens = cursor + timedelta(days=1)
+        closes = opens + timedelta(days=6)
+        weeks.append({"week": n, "start": opens.isoformat(), "end": closes.isoformat()})
+        cursor = closes
+    return weeks
 
 
 def load_scoring(session: Session, league_key: str):

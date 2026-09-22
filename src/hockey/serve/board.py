@@ -41,6 +41,13 @@ class Board:
     bench: int
     n_teams: int
     fitted: dict[str, str] = field(default_factory=dict)
+    # Draft-day context, written beside the posterior by `hockey.export`. Empty
+    # when the board was built without a warehouse: every consumer checks, and
+    # an absent calendar is reported rather than answered with zeros.
+    calendar: dict[str, list] = field(default_factory=dict)
+    weeks: list[dict] = field(default_factory=list)
+    injuries: dict[int, dict] = field(default_factory=dict)
+    context_from: dict[str, str] = field(default_factory=dict)
 
     @property
     def column_of(self) -> dict[int, int]:
@@ -98,6 +105,8 @@ def load(directory: Path, goalies: Path | None = None, n_teams: int = 14) -> Boa
     shape = {r["position"]: int(r["count"]) for r in roster if r.get("starting")}
     bench = sum(int(r["count"]) for r in roster if r["position"] == "BN")
 
+    calendar, weeks, injuries, context_from = _draft_context(directory)
+
     missing = set(players["player_id"].astype(int)) - set(ids)
     if missing:
         raise SystemExit(
@@ -129,7 +138,61 @@ def load(directory: Path, goalies: Path | None = None, n_teams: int = 14) -> Boa
         bench=bench,
         n_teams=n_teams,
         fitted=fitted,
+        calendar=calendar,
+        weeks=weeks,
+        injuries=injuries,
+        context_from=context_from,
     )
+
+
+def _draft_context(directory: Path) -> tuple[dict, list, dict, dict]:
+    """The calendar, the scoring weeks and the injury list, if they were written.
+
+    All three are optional. A board exported without a warehouse has none of
+    them, and the honest response to "how many games in the first fortnight" is
+    then that the board cannot say - not zero, which reads as a real answer and
+    would quietly sink every player on a team whose schedule is simply missing.
+    """
+    calendar: dict[str, list] = {}
+    weeks: list[dict] = []
+    injuries: dict[int, dict] = {}
+    source: dict[str, str] = {}
+
+    schedule_file = directory / "schedule.csv"
+    if schedule_file.exists():
+        frame = pd.read_csv(schedule_file, parse_dates=["date"])
+        for team, days in frame.groupby("team")["date"]:
+            calendar[str(team)] = sorted(d.date() for d in days)
+        source["schedule"] = (
+            f"{len(frame)} team-games, {frame['date'].min():%Y-%m-%d} to "
+            f"{frame['date'].max():%Y-%m-%d}"
+        )
+    else:
+        logger.warning(
+            "no schedule.csv in %s, so no schedule question can be answered. "
+            "Re-run `python -m hockey.export` with the warehouse up.",
+            directory,
+        )
+
+    weeks_file = directory / "weeks.csv"
+    if weeks_file.exists():
+        weeks = pd.read_csv(weeks_file).to_dict("records")
+        source["weeks"] = f"{len(weeks)} scoring weeks from the league config"
+
+    injury_file = directory / "injuries.csv"
+    if injury_file.exists():
+        frame = pd.read_csv(injury_file)
+        injuries = {
+            int(r.player_id): {
+                "status": str(r.status),
+                "injury_type": None if pd.isna(r.injury_type) else str(r.injury_type),
+                "synced_at": str(r.synced_at),
+            }
+            for r in frame.itertuples()
+        }
+        if len(frame):
+            source["injuries"] = f"{len(frame)} injured, synced {frame['synced_at'].max()[:10]}"
+    return calendar, weeks, injuries, source
 
 
 def revalue(board: Board, drafted: set[int]) -> tuple[pd.DataFrame, pd.DataFrame]:

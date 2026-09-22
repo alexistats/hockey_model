@@ -279,3 +279,119 @@ def test_goalies_are_capped():
     state.reconcile(list(range(4000, 4000 + 14 * 15)))  # round 16
     assert "cap" in _rule_block(Row(), state, DEFAULT_RULES, three)
     assert _rule_block(Row(), state, DEFAULT_RULES, three.head(2)) is None
+
+
+# --- the plan, and what the pick rule prefers ------------------------------
+
+
+class _Board:
+    """Just enough board for the plan: the roster shape and the bench."""
+
+    roster_shape = {"C": 2, "LW": 2, "RW": 2, "D": 4, "G": 2}
+    bench = 5
+    injuries: dict = {}
+    calendar: dict = {}
+    weeks: list = []
+
+
+def _state_with(mine: int):
+    state = DraftState(slot=8, n_teams=14)
+    for pid in range(9000, 9000 + mine):
+        state.take(pid, by_me=True)
+    return state
+
+
+def test_the_plan_fills_starters_before_it_plans_anything():
+    from hockey.serve.recommend import DEFAULT_RULES, draft_plan
+
+    plan = draft_plan(_Board(), _state_with(15), DEFAULT_RULES, {"D": 1})
+    assert plan["pick_kind"] == "starter"  # two picks left, but a slot is open
+
+
+def test_the_last_two_picks_are_schedule_picks_and_the_ones_before_swing():
+    from hockey.serve.recommend import DEFAULT_RULES, draft_plan
+
+    full = dict.fromkeys(["C", "LW", "RW", "D", "G"], 0)
+    kinds = {
+        17 - n: draft_plan(_Board(), _state_with(n), DEFAULT_RULES, full)["pick_kind"]
+        for n in range(12, 17)
+    }
+    # picks_left 5,4,3 swing for the ceiling; the final 2 are schedule picks
+    assert kinds[5] == "ceiling" and kinds[4] == "ceiling" and kinds[3] == "ceiling"
+    assert kinds[2] == "schedule" and kinds[1] == "schedule"
+
+
+def _cand(pid, name, score, *, need=False, slot="C", starts=None, injury=None):
+    from hockey.serve.recommend import Candidate
+
+    return Candidate(
+        player_id=pid,
+        player=name,
+        slot=slot,
+        eligible=[slot],
+        team="BOS",
+        mean=400.0,
+        floor=300.0,
+        ceiling=500.0,
+        vorp=score,
+        p20=350.0,
+        p80=450.0,
+        risk_score=score,
+        tier=1,
+        replacement_is_lower_bound=False,
+        replacement_free_below=20,
+        fills_a_need=need,
+        need_slot=slot if need else None,
+        injury=injury,
+        schedule_opening=None if starts is None else {"games": 5, "starts": starts},
+    )
+
+
+def test_an_open_slot_beats_a_slightly_better_bench_player():
+    """The logjam this was written for: one defenceman, then forwards all night,
+    and the blue line drafted from leftovers in the last rounds."""
+    from hockey.serve.recommend import DEFAULT_RULES, _recommend
+
+    no_read = {"position": None, "reason": ""}
+    plan = {"pick_kind": "starter"}
+    shortlist = [_cand(1, "bench forward", 200.0), _cand(2, "open D", 180.0, need=True, slot="D")]
+    got = _recommend(shortlist, no_read, plan, DEFAULT_RULES, "risk_score")
+    assert got["player"] == "open D" and got["why"] == "needs first -> D"
+
+
+def test_a_far_better_bench_player_still_wins():
+    # "Unless the forwards are insanely better" - priced at the margin, not
+    # asserted, so the rule can be argued with rather than believed.
+    from hockey.serve.recommend import DEFAULT_RULES, _recommend
+
+    shortlist = [_cand(1, "much better", 260.0), _cand(2, "open D", 180.0, need=True, slot="D")]
+    got = _recommend(
+        shortlist, {"position": None}, {"pick_kind": "starter"}, DEFAULT_RULES, "risk_score"
+    )
+    assert got["player"] == "much better" and "margin" in got["detail"]
+
+
+def test_a_schedule_pick_skips_a_player_who_cannot_play():
+    from hockey.serve.recommend import DEFAULT_RULES, _recommend
+
+    shortlist = [
+        _cand(1, "injured", 200.0, starts=5, injury={"status": "Out"}),
+        _cand(2, "available", 150.0, starts=3),
+    ]
+    got = _recommend(
+        shortlist, {"position": None}, {"pick_kind": "schedule"}, DEFAULT_RULES, "risk_score"
+    )
+    assert got["player"] == "available"
+    assert got["why"] == "plan -> schedule"
+
+
+def test_a_schedule_pick_with_no_starts_falls_back_rather_than_forcing_one():
+    # Everyone left is blocked by my own roster that fortnight, so there is no
+    # schedule pick to make and the best player is the honest answer.
+    from hockey.serve.recommend import DEFAULT_RULES, _recommend
+
+    shortlist = [_cand(1, "blocked", 200.0, starts=0), _cand(2, "also blocked", 150.0, starts=0)]
+    got = _recommend(
+        shortlist, {"position": None}, {"pick_kind": "schedule"}, DEFAULT_RULES, "risk_score"
+    )
+    assert got["player"] == "blocked" and got["why"] == "best score"

@@ -46,3 +46,15 @@ roster_positions:
   - { position: G, count: 2, starting: true }
   - { position: BN, count: 5, starting: false }
   - { position: "IR+", count: 2, starting: false }
+
+# Fantasy scoring weeks. Yahoo's own settings are the authority, but the league
+# API has been answering 403 (see `python -m hockey.yahoo doctor`), so week 1 is
+# transcribed from the league page and the rest are derived from it.
+#
+# Week 1 is SHORT: the season opens Tuesday 29 September 2026 and Yahoo's weeks
+# run Monday to Sunday, so week 1 is six days and week 2 is the first full one.
+# Counting fourteen days from opening night measures the wrong fortnight, which
+# is exactly what the draft's "first two weeks" question must not do.
+weeks:
+  first_start: 2026-09-29
+  first_end: 2026-10-04
