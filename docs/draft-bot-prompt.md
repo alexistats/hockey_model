@@ -17,6 +17,7 @@ Base URL `http://127.0.0.1:8899`. Interactive docs at `/docs`.
 |---|---|---|
 | `GET /health` | once at start | `convergence` (r-hat). No convergence block, no draft. |
 | `POST /draft/reset` | before a mock | clears state |
+| `POST /draft/settings` | once, if the draft is not 17 rounds | `{"rules": {"draft_rounds": 16}}` — every deadline is measured against it |
 | `POST /draft/observed` | every time the board changes | `{"names": [...everyone drafted...], "mine": [...my players...]}` |
 | `GET /recommend` | my turn | `recommendation`, and everything behind it |
 | `GET /team/me` | my turn, for the log | `lineup`, `needs`, `bench` |
@@ -57,6 +58,10 @@ close to a coin flip; a recommendation carrying an `injury`.
     `fills_a_need`, `need_slot`, `beats_next`, `notes`,
     `replacement_is_lower_bound`, `replacement_free_below`, `injury`,
     `schedule_opening`, `schedule_season`.
+- **`roster_pressure`** - `picks_left`, `slots_open`, `slack`, `open` and the
+  live `need_first_margin` (`null` means no slack left). Worth logging on every
+  pick: it explains a `needs first` that looks early or a `need overridden` that
+  looks generous.
 - **`plan`** - `pick_kind` is `starter`, `ceiling`, `schedule` or `bench`, with
   `picks_left`. Starting slots come first; once they are full the last five
   picks are planned, and the final two go to schedule fit.
@@ -75,12 +80,27 @@ round 14, three at most.
 
 ## The strategy, so you can explain it at the table
 
-**Starting slots before bench depth.** A candidate who fills an open slot beats
-one who does not unless the bench player's score is more than 25 higher. This is
-the anti-logjam rule: one defenceman and then forwards all night leaves the blue
-line to be drafted from whatever is left in the last rounds. When a bench player
-does win, `why` is `best score, need overridden` and `detail` gives the gap, so
-the exception is visible rather than silent.
+**Starting slots before bench depth, on a deadline.** A candidate who fills an
+open slot beats one who does not unless the bench player's score clears a
+margin — and that margin rises as the draft runs out of picks.
+
+`roster_pressure` carries the arithmetic: `picks_left`, `slots_open` and `slack`
+(the difference). The margin starts at 25 and scales by `picks_left / slack`, so
+early a clearly better bench player still wins, while with four picks left for
+four open slots `need_first_margin` is `null` and no gap buys bench depth at all.
+
+This exists because value alone cannot see the end of the draft.
+`cost_of_waiting` correctly reports 0.0 at defence for most of a draft — there is
+always another defenceman — but an unfilled starting slot scores zero for the
+season. That cost is zero for twelve rounds and then enormous, a shape no value
+curve has, so it is counted in picks rather than priced in points.
+
+When a bench player does win, `why` is `need overridden`, and `detail` gives the
+gap and the pressure, so the exception is visible rather than silent.
+
+**The shortlist always carries a filler.** When none of the top candidates fills
+an open slot, the best player who does is appended, with a note saying why he is
+there. A deadline can always be satisfied.
 
 **Positional reach.** When passing on a position costs at least 8 more than the
 next open one, take the best player there instead of the best overall.
@@ -131,9 +151,14 @@ flag is not proof of fitness.
               runners-up: Tolvanen 102, Matheson 99
               rule_cost: none     injury: none
 
-`why` must be one of: `positional_read -> <pos>`, `needs first -> <pos>`,
-`best score, need overridden`, `plan -> schedule`, `plan -> ceiling`, or
-`best score`. Anything else is a bug in the bot, not a judgement call: report it
-rather than keep the pick.
+`why` is exactly one of these six values. Anything else is a server bug, not a
+judgement call: report it rather than keep the pick.
+
+- `positional_read -> <pos>`
+- `needs first -> <pos>`
+- `need overridden`
+- `plan -> schedule`
+- `plan -> ceiling`
+- `best score`
 
 Send the full log after each mock.

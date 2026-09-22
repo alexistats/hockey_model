@@ -449,3 +449,109 @@ def test_reset_clears_the_unidentified_count_too():
     state.reconcile([1], unidentified=4)
     state.reset()
     assert state.total_picks == 0 and state.current_round == 1
+
+
+# --- the draft ends, which no value curve knows ----------------------------
+
+
+def test_the_margin_rises_as_the_picks_run_out():
+    from hockey.serve.recommend import DEFAULT_RULES, roster_pressure
+
+    board, rules = _Board(), {**DEFAULT_RULES, "draft_rounds": 16}
+    open_d = {"C": 0, "LW": 0, "RW": 0, "D": 3, "G": 1}
+    early = roster_pressure(board, _state_with(4), rules, open_d)
+    late = roster_pressure(board, _state_with(9), rules, open_d)
+    assert early["slack"] == 8 and late["slack"] == 3
+    assert late["need_first_margin"] > early["need_first_margin"]
+
+
+def test_with_no_slack_no_gap_buys_a_bench_player():
+    from hockey.serve.recommend import DEFAULT_RULES, roster_pressure
+
+    rules = {**DEFAULT_RULES, "draft_rounds": 16}
+    # four picks left, four slots open: every one of them is spoken for
+    pressure = roster_pressure(_Board(), _state_with(12), rules, {"D": 3, "G": 1})
+    assert pressure["slack"] == 0
+    assert pressure["need_first_margin"] is None
+
+
+def test_the_reported_mock_now_takes_the_defenceman():
+    """The case from the bot's report, at its own numbers.
+
+    Round 10 of 16, forwards full and three defence slots open. The best bench
+    winger scored 195.2 against 148.6 for the best defenceman - a 46.6 gap, past
+    the flat 25 bar, so the override fired and the blue line stayed empty. With
+    seven picks left for four slots the bar is 58, and the defenceman wins.
+    """
+    from hockey.serve.recommend import DEFAULT_RULES, _recommend, roster_pressure
+
+    rules = {**DEFAULT_RULES, "draft_rounds": 16}
+    needs = {"C": 0, "LW": 0, "RW": 0, "D": 3, "G": 1}
+    pressure = roster_pressure(_Board(), _state_with(9), rules, needs)
+    shortlist = [
+        _cand(1, "Kiefer Sherwood", 195.2, slot="LW"),
+        _cand(2, "best defenceman", 148.6, need=True, slot="D"),
+    ]
+    got = _recommend(
+        shortlist, {"position": None}, {"pick_kind": "starter"}, rules, "risk_score", pressure
+    )
+    assert got["player"] == "best defenceman"
+    assert got["why"] == "needs first -> D"
+
+    # The same two players in round 4, with room to spare, still go the other
+    # way: this is a deadline, not a preference for defencemen.
+    roomy = roster_pressure(_Board(), _state_with(3), rules, needs)
+    got = _recommend(
+        shortlist, {"position": None}, {"pick_kind": "starter"}, rules, "risk_score", roomy
+    )
+    assert got["player"] == "Kiefer Sherwood" and got["why"] == "need overridden"
+
+
+def test_the_deadline_outranks_the_positional_reach():
+    """Reach is a value argument and defence's wait cost is exactly 0.0 all
+    draft, so reach would spend the last picks on whichever forward position
+    still drains."""
+    from hockey.serve.recommend import DEFAULT_RULES, _recommend, roster_pressure
+
+    rules = {**DEFAULT_RULES, "draft_rounds": 16}
+    pressure = roster_pressure(_Board(), _state_with(12), rules, {"D": 4})
+    read = {
+        "position": "RW",
+        "reason": "waiting 7 picks costs about 16 at RW, against 0 at D",
+        "take": {"player_id": 1, "player": "a winger"},
+    }
+    shortlist = [
+        _cand(1, "a winger", 200.0, slot="RW"),
+        _cand(2, "a defenceman", 120.0, need=True, slot="D"),
+    ]
+    got = _recommend(shortlist, read, {"pick_kind": "starter"}, rules, "risk_score", pressure)
+    assert got["player"] == "a defenceman"
+
+
+def test_why_stays_inside_the_agreed_vocabulary():
+    from hockey.serve.recommend import DEFAULT_RULES, _recommend, roster_pressure
+
+    allowed_whys = {
+        "best score",
+        "need overridden",
+        "plan -> ceiling",
+        "plan -> schedule",
+    }
+    rules = {**DEFAULT_RULES, "draft_rounds": 16}
+    cases = [
+        ([_cand(1, "a", 200.0, need=True)], {"position": None}, {"pick_kind": "starter"}, {"D": 1}),
+        (
+            [_cand(1, "a", 200.0), _cand(2, "b", 100.0, need=True, slot="D")],
+            {"position": None},
+            {"pick_kind": "starter"},
+            {"D": 1},
+        ),
+        ([_cand(1, "a", 200.0, starts=4)], {"position": None}, {"pick_kind": "schedule"}, {}),
+        ([_cand(1, "a", 200.0)], {"position": None}, {"pick_kind": "ceiling"}, {}),
+    ]
+    for shortlist, read, plan, needs in cases:
+        pressure = roster_pressure(_Board(), _state_with(3), rules, needs)
+        why = _recommend(shortlist, read, plan, rules, "risk_score", pressure)["why"]
+        assert why in allowed_whys or why.startswith(("needs first -> ", "positional_read -> ")), (
+            why
+        )

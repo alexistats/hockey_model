@@ -45,6 +45,10 @@ DEFAULT_RULES = {
     # preferred over one who does not, unless the bench player is better by more
     # than this. "Unless the forwards are insanely better" priced, not asserted.
     "need_first_margin": 25.0,
+    # How many rounds this draft actually runs. Defaults to the roster: starting
+    # slots plus bench. Set it when the league drafts fewer, because every
+    # deadline calculation below is measured against it.
+    "draft_rounds": None,
     # Once every starting slot is filled, the remaining picks are bench. The
     # last `plan_window` of them are planned: the final `schedule_picks` go to
     # players who would actually be in the lineup in the opening weeks, and the
@@ -230,6 +234,51 @@ def positional_read(
     }
 
 
+def roster_pressure(board, state, rules: dict, needs: dict[str, int]) -> dict:
+    """How much room is left to defer a starting slot.
+
+    `cost_of_waiting` is a value question and it answers correctly: waiting on
+    defence costs nothing, because there is always another defenceman. What it
+    cannot see is that the draft ends. An unfilled starting slot scores zero for
+    the season, and the cost of deferring it is not the drop in the best
+    available - it is the risk of running out of picks. That cost is zero for
+    most of the draft and then enormous, which is a shape no value curve has.
+
+    So it is counted instead of priced. `slack` is the picks I have beyond the
+    slots I still must fill. While it is large a better bench player is worth
+    taking; as it shrinks the bar rises; at zero every remaining pick is spoken
+    for and bench depth is not on the table at any gap.
+
+    This is what let two mocks finish with three empty defence slots and seven
+    forwards on the bench: each individual override cleared the flat 25-point
+    bar, and nothing was counting the picks left to fill them.
+    """
+    n_rounds = rules.get("draft_rounds") or (sum(board.roster_shape.values()) + board.bench)
+    picks_left = max(0, int(n_rounds) - len(state.mine))
+    slots_open = sum(needs.values())
+    slack = picks_left - slots_open
+    base = float(rules["need_first_margin"])
+    if slots_open == 0:
+        margin = base
+    elif slack <= 0:
+        margin = None  # nothing is worth a starting slot now
+    else:
+        # Rises as the room disappears: base when picks are plentiful, and
+        # steeply higher as the last few are claimed by open slots.
+        margin = base * picks_left / slack
+    return {
+        "picks_left": picks_left,
+        "slots_open": slots_open,
+        "open": {p: n for p, n in needs.items() if n},
+        "slack": slack,
+        "need_first_margin": None if margin is None else round(margin, 1),
+        "reason": (
+            f"{picks_left} pick(s) left for {slots_open} open starting slot(s)"
+            + ("; every remaining pick is spoken for" if slack <= 0 and slots_open else "")
+        ),
+    }
+
+
 def draft_plan(board, state, rules: dict, needs: dict[str, int]) -> dict:
     """What this pick is for, once the starting lineup is complete.
 
@@ -403,6 +452,33 @@ def shortlist(
         if not c.fills_a_need:
             c.notes.append(f"my {c.slot} slots are already filled; this is bench depth")
 
+    # Whatever else is on the shortlist, the best player who fills an open
+    # starting slot has to be on it. Otherwise a deadline can arrive with
+    # nothing to satisfy it: the top six were all bench depth, and the rule that
+    # must take a defenceman has no defenceman to take.
+    if any(needs.values()) and not any(c.fills_a_need for c in allowed):
+        filler = next(
+            (
+                row
+                for row in ranked.itertuples()
+                if _rule_block(row, state, rules, mine) is None
+                and any(
+                    needs.get(p, 0) > 0
+                    for p in (
+                        row.eligible if isinstance(row.eligible, tuple | list) else (row.slot,)
+                    )
+                )
+            ),
+            None,
+        )
+        if filler is not None:
+            extra = make(filler, None)
+            extra.notes.append(
+                f"on the shortlist because he fills an open {extra.need_slot} slot, "
+                f"not because he is in the top {limit} by score"
+            )
+            allowed.append(extra)
+
     # What the rules cost, priced rather than asserted.
     rule_cost = None
     if blocked and allowed:
@@ -459,7 +535,8 @@ def shortlist(
         )
         read["take"] = None if best_there is None else make(best_there, None).__dict__
 
-    pick = _recommend(allowed, read, plan, rules, key)
+    pressure = roster_pressure(board, state, rules, needs)
+    pick = _recommend(allowed, read, plan, rules, key, pressure)
 
     return {
         "round": state.current_round,
@@ -475,13 +552,19 @@ def shortlist(
         "cost_of_waiting": waiting,
         "positional_read": read,
         "plan": plan,
+        "roster_pressure": pressure,
         "recommendation": pick,
         "context": dict(board.context_from),
     }
 
 
 def _recommend(
-    allowed: list[Candidate], read: dict, plan: dict, rules: dict, key: str
+    allowed: list[Candidate],
+    read: dict,
+    plan: dict,
+    rules: dict,
+    key: str,
+    pressure: dict | None = None,
 ) -> dict | None:
     """One pick, with the rule that produced it named.
 
@@ -489,14 +572,37 @@ def _recommend(
     how "take the best score" quietly became "take a forward again". The order
     below is the whole strategy, and it is here so there is one copy of it:
 
-      1. a position draining fast enough to reach for,
-      2. an open starting slot, unless a bench player beats it by a wide margin,
-      3. the job this pick was given by the plan,
-      4. the best score left.
+      1. an open starting slot with no picks left to spare,
+      2. a position draining fast enough to reach for,
+      3. an open starting slot, unless a bench player beats it by the margin,
+      4. the job this pick was given by the plan,
+      5. the best score left.
+
+    The deadline rule is first because it is the only one that knows the draft
+    ends. Everything below it compares value, and on value a deep position is
+    always worth deferring - which is how a blue line stays empty while the
+    bench fills with wingers.
     """
     if not allowed:
         return None
     best = allowed[0]
+    pressure = pressure or {}
+    margin = pressure.get("need_first_margin", float(rules["need_first_margin"]))
+    fillers = [c for c in allowed if c.fills_a_need]
+
+    # No slack: every remaining pick is claimed by a slot that would otherwise
+    # score zero all season, and no gap in projected points buys one back.
+    if margin is None and fillers:
+        pick = max(fillers, key=lambda c: getattr(c, key))
+        return {
+            "player_id": pick.player_id,
+            "player": pick.player,
+            "why": f"needs first -> {pick.need_slot}",
+            "detail": (
+                f"{pressure.get('reason', '')}, so this pick has to fill one. "
+                f"{pick.player} is the best of them"
+            ),
+        }
 
     if read.get("position") and read.get("take"):
         return {
@@ -510,10 +616,9 @@ def _recommend(
     # logjam: the blue line ends up drafted from whatever is left in the last
     # rounds. The margin is what "unless the forwards are insanely better"
     # means as a number.
-    margin = float(rules["need_first_margin"])
     if not best.fills_a_need:
-        filler = next((c for c in allowed if c.fills_a_need), None)
-        if filler is not None:
+        filler = fillers[0] if fillers else None
+        if filler is not None and margin is not None:
             gap = getattr(best, key) - getattr(filler, key)
             if gap < margin:
                 return {
@@ -529,10 +634,11 @@ def _recommend(
             return {
                 "player_id": best.player_id,
                 "player": best.player,
-                "why": "best score, need overridden",
+                "why": "need overridden",
                 "detail": (
                     f"{best.player} fills no open slot but beats the best filler "
-                    f"({filler.player}) by {gap:.0f}, over the {margin:.0f} margin"
+                    f"({filler.player}) by {gap:.0f}, over the {margin:.0f} margin "
+                    f"({pressure.get('reason', 'no deadline pressure')})"
                 ),
             }
 
