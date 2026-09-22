@@ -143,6 +143,8 @@ def revalue(board: Board, drafted: set[int]) -> tuple[pd.DataFrame, pd.DataFrame
     live = board.players[~board.players["player_id"].astype(int).isin(drafted)]
     if live.empty:
         empty = pd.DataFrame(columns=board.players.columns)
-        return empty, pd.DataFrame(columns=["position", "replacement", "extrapolated"])
+        return empty, pd.DataFrame(
+            columns=["position", "replacement", "extrapolated", "free_below"]
+        )
     levels = replacement_levels(live, board.slots)
     return add_value_over_replacement(live, levels), levels

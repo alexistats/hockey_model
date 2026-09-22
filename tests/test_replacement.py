@@ -225,3 +225,44 @@ def test_a_board_without_eligibility_is_unchanged():
     baseline = dict(zip(levels["position"], levels["replacement"], strict=True))
     # ranks 11-13 at C are 400, 390, 380
     assert baseline["C"] == pytest.approx(390.0)
+
+
+def test_a_shallow_pool_averages_across_the_cutoff_rather_than_one_survivor():
+    """The bug this was written for.
+
+    There are 42 centre slots in this league and about 51 centre-eligible
+    players, so centre runs out of freely available players mid-draft. The
+    baseline was then read off however few survived - at one point a single
+    player - and a three-point edge built on a one-player baseline decided a
+    third-round pick. The window now reaches back across the cutoff into the
+    cheapest starters, so it always averages `window` players.
+    """
+    board = board_of("C", [100 - i for i in range(12)])  # 100 down to 89
+    levels = replacement_levels(board, {"C": 10}, window=4)
+    row = levels.iloc[0]
+    assert row["free_below"] == 2  # only 90 and 89 are genuinely free
+    # 92 and 91 are the cheapest starters, so the window is 92, 91, 90, 89.
+    assert row["replacement"] == pytest.approx(90.5)
+    assert bool(row["extrapolated"])
+
+
+def test_the_baseline_never_jumps_up_as_the_board_drains():
+    """It used to. When the last free player was absorbed the estimator
+    switched to the six worst players in the whole pool, which were better
+    than the survivors it replaced: the centre baseline rose 23 points
+    mid-draft and then froze, so every centre's value fell for no reason on
+    the board."""
+    board = board_of("C", [100 - i for i in range(20)])
+    slots = {"C": 12}
+    seen = []
+    for gone in range(0, 12):
+        live = board.sort_values("mean", ascending=False).iloc[gone:]
+        seen.append(float(replacement_levels(live, slots, window=4)["replacement"].iloc[0]))
+    for before, after in zip(seen, seen[1:], strict=False):
+        assert after <= before + 1e-9, f"baseline rose from {before} to {after}"
+
+
+def test_free_below_says_how_many_players_actually_set_the_baseline():
+    deep = replacement_levels(board_of("C", [100 - i for i in range(20)]), {"C": 4}, window=4)
+    assert deep["free_below"].iloc[0] == 16
+    assert not bool(deep["extrapolated"].iloc[0])

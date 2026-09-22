@@ -71,7 +71,19 @@ picks start, every number in it is stale. The draft UI recomputes live in
 JavaScript; the CSV does not.
 
 If the bot uses static VORP mid-draft it will systematically overvalue whatever
-position has already been picked out.
+position has already been picked out. The draft API (`python -m hockey.serve`)
+recomputes both on every observation, and is the supported way to read them
+live.
+
+**A shallow position stops measuring anything partway through.** There are 42
+centre slots in this league and about 51 centre-eligible players on the board,
+so centre runs out of *freely available* players around pick 40. The baseline
+then reaches back across the cutoff into the cheapest starters rather than
+averaging the one or two survivors, and every level carries `free_below`: how
+many genuinely unclaimed players set it. Under six, `extrapolated` is true, the
+value at that position is a **lower bound**, and a few points of edge there is
+noise, not scarcity. This mattered in a real draft: a third-round pick turned on
+a three-point edge whose centre baseline came off a single player.
 
 ### 3. Tiers are struck once, and must stay that way
 

@@ -107,6 +107,17 @@ def replacement_levels(
     Averaged over a window of players rather than read off the single player at
     the cutoff, because one player's projection is noisy and the baseline it
     sets would propagate that noise into every value at the position.
+
+    The window straddles the cutoff when it has to. A shallow position runs out
+    of freely available players long before the draft ends - there are 42 centre
+    slots in this league and about 51 centre-eligible players - and averaging
+    the one or two survivors reads a baseline off a sample of one or two. Worse,
+    switching estimator the moment the last one is absorbed moved the centre
+    baseline 23 points *upward* mid-draft and then froze it there for the rest
+    of the night, because the fallback averaged six players nobody will ever
+    draft. So when fewer than `window` are free, the window is extended upward
+    into the cheapest starters at that position: they are the marginal players,
+    they keep being drafted, and the baseline keeps moving.
     """
     assigned, leftover = fill_slots(board, slots, column)
     leftover = leftover.sort_values(column, ascending=False)
@@ -115,34 +126,39 @@ def replacement_levels(
     rows = []
     for position in sorted(slots):
         free = leftover[[position in _eligible(r, r.position) for r in leftover.itertuples()]]
-        extrapolated = free.empty
-        if free.empty:
-            # Every eligible player was absorbed, so the baseline would have to
-            # be extrapolated past the end of the pool. Say so rather than
-            # quietly inventing one, which would overstate value here.
-            logger.warning(
-                "every %s-eligible player fits in a slot; value over replacement "
-                "at this position is a lower bound",
-                position,
-            )
-            free = board[[position in _eligible(r, r.position) for r in board.itertuples()]]
-            free = free.sort_values(column, ascending=False).tail(window)
-        head = free.head(window)
         filled = taken[taken == position]
         starters = board[board["player_id"].astype(int).isin(filled.index)]
+        starters = starters.sort_values(column, ascending=False)
+        short = window - len(free)
+        if short > 0:
+            # Not enough free players to average, so reach back up across the
+            # cutoff for the cheapest starters at this position.
+            logger.warning(
+                "only %d %s-eligible player(s) are freely available; the baseline "
+                "takes in the %d cheapest starter(s) and value here is a lower bound",
+                len(free),
+                position,
+                min(short, len(starters)),
+            )
+        head = pd.concat([starters.tail(short), free]) if short > 0 else free.head(window)
         rows.append(
             {
                 "position": position,
                 "drafted": len(filled),
                 "pool": len(filled) + len(free),
+                # How many of the averaged players are genuinely unclaimed. Below
+                # `window` the baseline leans on starters, and a consumer reading
+                # a one-player edge at that position is reading noise.
+                "free_below": len(free),
                 "replacement": float(head[column].mean()),
                 # True when the pool ran out before replacement, so the baseline
-                # is the tail of what exists rather than the next player off the
-                # board. Value at this position is then a LOWER bound and real
-                # scarcity is higher. This happens routinely late in a draft, and
-                # a consumer that cannot tell the two cases apart is reading a
-                # number that quietly changes meaning as the board empties.
-                "extrapolated": bool(extrapolated),
+                # had to reach up across the cutoff rather than read the next
+                # player off the board. Value at this position is then a LOWER
+                # bound and real scarcity is higher. This happens routinely late
+                # in a draft, and a consumer that cannot tell the two cases apart
+                # is reading a number that quietly changes meaning as the board
+                # empties.
+                "extrapolated": bool(short > 0),
                 "starter_cutoff": (
                     float(starters[column].min()) if len(starters) else float(head[column].mean())
                 ),

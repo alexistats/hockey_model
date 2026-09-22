@@ -230,7 +230,7 @@ def create_app(
         }
 
     @app.get("/recommend")
-    def recommend(limit: int = 4):
+    def recommend(limit: int = 6):
         valued, levels = _valued()
         if valued.empty:
             raise HTTPException(409, "no players left on the board")

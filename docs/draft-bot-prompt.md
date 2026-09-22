@@ -42,15 +42,17 @@ downstream can catch it.
 
 ## What `/recommend` returns
 
-- `candidates`: up to 4 players the rules allow, best first, ranked by
-  `ranked_by`.
+- `candidates`: the players the rules allow, best first, ranked by `ranked_by`.
   - With `ranked_by: "risk_score"` (the default), each player's score is
     `(1-w)*(p20 - replacement) + w*(p80 - replacement)`, where `w` is
     `risk_weight`. The weight goes from 0.2 in round 1 (cautious) to 0.8 in the
     last round (upside), so this is my floor-to-ceiling strategy measured
     against replacement.
   - Each candidate also carries `vorp`, `mean`, `p20`, `p80`, `floor`,
-    `ceiling`, `tier`, `fills_a_need`, `beats_next` and `notes`.
+    `ceiling`, `tier`, `fills_a_need`, `beats_next`, `notes`,
+    `replacement_is_lower_bound` and `replacement_free_below`.
+  - `/recommend` returns 6 candidates by default. Pass `?limit=10` when you want
+    a wider field to reason about; it costs nothing.
 - `positional_read`: whether a position is emptying out before my next turn.
   - `call` is one of `"position"`, `"no_clear_call"` or `"best_available"`.
   - When `call` is `"position"`, `position` and `take` name the best player the
@@ -96,6 +98,18 @@ so. Examples: a candidate's notes say its value is a lower bound, or a player's
   not a lineup score.
 - `cost_of_waiting` assumes the room drafts straight down the value board. It is
   a direction and rough size, not a forecast.
+- **A small edge at a position whose pool has run dry is not an edge.**
+  `replacement_free_below` says how many genuinely available players set that
+  position's baseline. Centre runs dry around pick 40 in this league, because 42
+  slots are chasing about 51 centre-eligible players. When it is under 6,
+  `replacement_is_lower_bound` is true, the value is understated by an unknown
+  amount, and a few points of difference against a candidate at a healthy
+  position is noise. Say so rather than treating the ordering as real.
+- **Tier is not part of the score, and is not comparable across positions.**
+  Tiers are struck within a position on raw points, so a tier-5 centre and a
+  tier-2 winger are not on one scale; the score already handles cross-position
+  comparison. Worth reporting when a low-tier player outranks a high-tier one,
+  never worth overriding the order for.
 
 ## Log every pick
 

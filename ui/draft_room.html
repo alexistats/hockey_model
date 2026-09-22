@@ -605,6 +605,9 @@ footer b { color: var(--slate); font-weight: 600; }
   const eligible = (p) => (p.e && p.e.length ? p.e : [p.p]);
 
   let levels = {};
+  // How many genuinely free players set each baseline; under six it leans on
+  // starters and the value at that position is a lower bound.
+  let freeBelow = {};
   function recompute() {
     // Slots still to be filled, so replacement rises as a position empties:
     // fewer teams still need one, and fewer are left to take.
@@ -618,22 +621,32 @@ footer b { color: var(--slate); font-weight: 600; }
     // deeper than the league really is. Whoever is left when the slots run out
     // is what "freely available" means, and that is replacement.
     const live = P.filter((p) => !state.gone.has(p.i)).sort((a, b) => b.m - a.m);
-    const taken = new Set();
+    const takenAt = new Map();
     for (const p of live) {
       const open = eligible(p).filter((pos) => openings[pos] > 0);
       if (!open.length) continue;
       const pick = open.reduce((a, b) => (openings[b] > openings[a] ? b : a));
       openings[pick]--;
-      taken.add(p.i);
+      takenAt.set(p.i, pick);
     }
-    const spare = live.filter((p) => !taken.has(p.i));
+    const spare = live.filter((p) => !takenAt.has(p.i));
     const weight = riskWeight();
     levels = {};
+    freeBelow = {};
     for (const pos of POSITIONS) {
-      let window = spare.filter((p) => eligible(p).includes(pos)).slice(0, 6);
-      if (!window.length) {
-        window = live.filter((p) => eligible(p).includes(pos)).slice(-6);
-      }
+      // The window straddles the cutoff when it has to. A shallow position -
+      // 42 centre slots against about 51 centre-eligible players - runs out of
+      // freely available players mid-draft, and averaging the one or two
+      // survivors reads a baseline off a sample of one. So the window reaches
+      // back up into the cheapest starters at the position, who are the
+      // marginal players and do keep being drafted. Same rule as the API's
+      // replacement_levels, so the page and the bot price a position alike.
+      const free = spare.filter((p) => eligible(p).includes(pos)).slice(0, 6);
+      freeBelow[pos] = free.length;
+      const short = 6 - free.length;
+      const window = short > 0
+        ? live.filter((p) => takenAt.get(p.i) === pos).slice(-short).concat(free)
+        : free;
       levels[pos] = window.length
         ? window.reduce((s, p) => s + p.m, 0) / window.length
         : 0;

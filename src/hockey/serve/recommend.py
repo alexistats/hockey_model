@@ -64,6 +64,7 @@ class Candidate:
     risk_score: float
     tier: int | None
     replacement_is_lower_bound: bool
+    replacement_free_below: int
     fills_a_need: bool
     beats_next: float | None = None
     blocked_by: str | None = None
@@ -247,7 +248,7 @@ def shortlist(
     valued: pd.DataFrame,
     levels: pd.DataFrame,
     draws_for,
-    limit: int = 4,
+    limit: int = 6,
     rules: dict | None = None,
 ) -> dict:
     """The top candidates, what separates them, and what a rule cost."""
@@ -259,6 +260,9 @@ def shortlist(
     lower_bound = {
         str(r.position): bool(getattr(r, "extrapolated", False)) for r in levels.itertuples()
     }
+    # How many genuinely free players set each baseline. Under a handful, the
+    # baseline is noise and a small edge at that position is not a reason.
+    free_below = {str(r.position): int(getattr(r, "free_below", 99)) for r in levels.itertuples()}
 
     n_rounds = sum(board.roster_shape.values()) + board.bench
     weight = risk_weight(
@@ -285,6 +289,7 @@ def shortlist(
             risk_score=round(float(row.risk_score), 1),
             tier=None if pd.isna(row.tier) else int(row.tier),
             replacement_is_lower_bound=lower_bound.get(str(row.slot), False),
+            replacement_free_below=free_below.get(str(row.slot), 99),
             fills_a_need=needs.get(str(row.slot), 0) > 0,
             blocked_by=blocked,
         )
@@ -315,8 +320,10 @@ def shortlist(
     for c in allowed:
         if c.replacement_is_lower_bound:
             c.notes.append(
-                f"{c.slot} has no freely available player left, so this value is a "
-                f"lower bound and real scarcity is higher"
+                f"{c.slot} has only {c.replacement_free_below} freely available player(s) "
+                f"left, so the baseline reaches up into the cheapest starters: this value "
+                f"is a lower bound, real scarcity is higher, and a small edge over a "
+                f"candidate at another position is not a reason to prefer this one"
             )
         if not c.fills_a_need:
             c.notes.append(f"my {c.slot} slots are already filled; this is bench depth")
