@@ -293,6 +293,7 @@ thead th.rangehead { padding-bottom: 2px; vertical-align: bottom; }
 .vorp { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
 .vorp.neg { color: var(--red); }
 .dim { color: var(--faint); font-family: var(--mono); font-size: 12px; }
+.verdict .held { color: var(--faint); }
 .mval { font-family: var(--mono); font-size: 13px; font-weight: 600; }
 .acts { width: 66px; }
 .mini {
@@ -404,7 +405,8 @@ footer b { color: var(--slate); font-weight: 600; }
     <input type="search" id="q" placeholder="Search a player" aria-label="Search a player">
     <div class="seg" id="posfilter" role="group" aria-label="Filter by position"></div>
     <div class="seg" id="sortby" role="group" aria-label="Sort the board">
-      <button data-sort="vorp" aria-pressed="true">Value</button>
+      <button data-sort="rs" aria-pressed="true" title="The order the draft bot picks in">Score</button>
+      <button data-sort="vorp" aria-pressed="false">Value</button>
       <button data-sort="m" aria-pressed="false">Points</button>
       <button data-sort="f" aria-pressed="false">Floor</button>
       <button data-sort="c" aria-pressed="false">Ceiling</button>
@@ -431,7 +433,8 @@ footer b { color: var(--slate); font-weight: 600; }
                 <div class="axis" id="axis"></div>
               </th>
               <th data-sort="m">Points</th>
-              <th data-sort="vorp" aria-sort="descending">Value</th>
+              <th data-sort="vorp">Value</th>
+              <th data-sort="rs" aria-sort="descending" title="Value blended from cautious to ambitious as the draft goes on">Score</th>
               <th data-sort="g">Games</th>
               <th class="plain"></th>
             </tr>
@@ -544,7 +547,7 @@ footer b { color: var(--slate); font-weight: 600; }
 
   const POSITIONS = DATA.positions;
   const state = {
-    sort: "vorp", asc: false, pos: "ALL", q: "",
+    sort: "rs", asc: false, pos: "ALL", q: "",
     hideGone: false, selected: P[0] ? P[0].i : null,
     gone: new Set(), mine: [],
     // `order` is `gone` in pick sequence, which is the only way to see a run:
@@ -624,6 +627,7 @@ footer b { color: var(--slate); font-weight: 600; }
       taken.add(p.i);
     }
     const spare = live.filter((p) => !taken.has(p.i));
+    const weight = riskWeight();
     levels = {};
     for (const pos of POSITIONS) {
       let window = spare.filter((p) => eligible(p).includes(pos)).slice(0, 6);
@@ -642,7 +646,44 @@ footer b { color: var(--slate); font-weight: 600; }
         : p.p;
       p.slot = best;
       p.vorp = p.m - (levels[best] || 0);
+      // The bot's order: p20 and p80, each over the same replacement level, so
+      // positions stay comparable. Raw floors bury defencemen and raw ceilings
+      // float goalies; measured this way neither does.
+      const repl = levels[best] || 0;
+      p.rs = DATA.rules && DATA.rules.rank_by === "vorp"
+        ? p.vorp
+        : (1 - weight) * (p.l - repl) + weight * (p.h - repl);
     }
+  }
+
+  // Which round the next pick falls in, counting from 1.
+  const currentRound = () => Math.floor(state.order.length / DATA.nTeams) + 1;
+
+  // Weight on the optimistic end, ramped from the first round to the last.
+  // The same function as the draft API's `risk_weight`, from the same rules.
+  function riskWeight() {
+    const r = DATA.rules || {};
+    const start = r.risk_start ?? 0.2, end = r.risk_end ?? 0.8;
+    if (r.rank_by === "vorp") return 0.5;
+    const rounds = Object.values(DATA.rosterShape).reduce((s, n) => s + n, 0) + (DATA.bench || 0);
+    if (rounds <= 1) return end;
+    const t = Math.min(1, Math.max(0, (currentRound() - 1) / (rounds - 1)));
+    return start + t * (end - start);
+  }
+
+  // Why a goalie may not be taken yet, or null. Mirrors the API's rule check,
+  // so the page never tells me to take a position the bot is forbidden to.
+  function goalieBlock() {
+    const r = DATA.rules || {};
+    const held = state.roster.filter((i) => eligible(P[i]).includes("G")).length;
+    const round = currentRound();
+    if (held === 0) {
+      return r.goalie_min_round && round < r.goalie_min_round
+        ? `no goalie before round ${r.goalie_min_round}` : null;
+    }
+    if (r.goalie_max && held >= r.goalie_max) return `already ${held} goalies`;
+    return r.goalie_second_min_round && round < r.goalie_second_min_round
+      ? `second goalie not before round ${r.goalie_second_min_round}` : null;
   }
 
   /* ---------- tiers, from the distributions, struck once ---------- */
@@ -732,6 +773,7 @@ footer b { color: var(--slate); font-weight: 600; }
         </td>
         <td class="mval">${fmt0(p.m)}</td>
         <td class="vorp ${p.vorp < 0 ? "neg" : ""}">${signed(p.vorp)}</td>
+        <td class="vorp ${p.rs < 0 ? "neg" : ""}">${signed(p.rs)}</td>
         <td class="dim">${fmt0(p.g)}</td>
         <td class="acts">
           <button class="mini ${cmp.has(p.i) ? "cmp-on" : ""}" data-act="cmp" title="Compare">⇄</button>
@@ -875,12 +917,14 @@ footer b { color: var(--slate); font-weight: 600; }
     const { filled, need } = myNeeds();
     const wait = picksUntilTurn();
     const cost = costOfWaiting(wait);
+    const gBlock = goalieBlock();
 
     const made = state.order.length;
     const mine = made + 1 === myPick(Math.floor(made / DATA.nTeams) + 1);
     document.getElementById("slotline").textContent =
       `of ${DATA.nTeams}${DATA.snake ? ", snake" : ""} · ` +
-      (mine ? `on the clock, then ${wait} picks` : `${wait} picks until my turn`);
+      (mine ? `on the clock, then ${wait} picks` : `${wait} picks until my turn`) +
+      ` · round ${currentRound()}, score ${Math.round((1 - riskWeight()) * 100)}% floor`;
 
     /* the grid */
     const rows = bands().map((b) => {
@@ -943,7 +987,8 @@ footer b { color: var(--slate); font-weight: 600; }
       const c = cost[pos];
       const pips = Array.from({ length: Math.max(slots, have) }, (_, k) =>
         `<span class="pip ${k < have ? "on" : ""} ${k >= slots ? "bn" : ""}"></span>`).join("");
-      const urgent = need[pos] > 0 && c.cost !== null && c.cost >= 20;
+      const urgent = need[pos] > 0 && !(pos === "G" && gBlock) && c.cost !== null &&
+        c.cost >= (DATA.urgent ?? 20);
       // A cost of zero is a real answer, not a missing one: the player I would
       // get at this position is the same now as in twenty-six picks. Rendering
       // it as "+0" reads like a rounding artefact, so say nothing is lost.
@@ -956,23 +1001,40 @@ footer b { color: var(--slate); font-weight: 600; }
     }).join("");
 
     /* the read */
-    const open = positions.filter((p) => need[p] > 0 && cost[p].cost !== null);
+    // The same call the draft API returns as `positional_read`: only open
+    // slots at positions a rule lets me take now, ranked by what passing costs,
+    // and even a lone position has to clear the bar.
+    const bar = DATA.noClearCall ?? 8;
+    const blocked = (p) => p === "G" && gBlock;
+    const open = positions.filter((p) => need[p] > 0 && !blocked(p) && cost[p].cost !== null);
+    const held = positions.filter((p) => need[p] > 0 && blocked(p));
+    const heldNote = held.length ? ` <span class="held">(${held.join(", ")}: ${gBlock}.)</span>` : "";
+    const bestAt = (pos) => P.filter((p) => !state.gone.has(p.i) && eligible(p).includes(pos))
+      .sort((a, b) => b.rs - a.rs)[0];
+    const top = P.filter((p) => !state.gone.has(p.i) && !(eligible(p).includes("G") && gBlock))
+      .sort((a, b) => b.rs - a.rs)[0];
+    const topLine = top ? ` Top score left: <b>${top.n}</b>.` : "";
     const el = document.getElementById("verdict");
     if (!open.length) {
-      el.innerHTML = `<b>Every starting slot is filled.</b> From here the bench is positionless,
-        so take the largest value over replacement left on the board.`;
+      el.innerHTML = (held.length
+        ? `<b>Take the best score.</b> The open slots are blocked by a rule for now.`
+        : `<b>Every starting slot is filled.</b> From here the bench is positionless,
+           so take the best score left on the board.`) + topLine + heldNote;
     } else {
       const ranked = [...open].sort((a, b) => cost[b].cost - cost[a].cost);
       const first = ranked[0], second = ranked[1];
-      const gap = second ? cost[first].cost - cost[second].cost : null;
-      el.innerHTML = gap !== null && gap < 8
-        ? `<b>No clear call.</b> Passing on <span class="take">${first}</span> costs about
-           ${fmt0(cost[first].cost)} points of value and <span class="take">${second}</span>
-           about ${fmt0(cost[second].cost)} — close enough that either is defensible.
-           Take the better player.`
-        : `<b>Take a <span class="take">${first}</span>.</b> Waiting ${wait} picks
-           costs about ${fmt0(cost[first].cost)} points of value there${
-             second ? `, against ${fmt0(cost[second].cost)} at ${second}` : ""}.`;
+      const runnerUp = second ? cost[second].cost : 0;
+      if (cost[first].cost - runnerUp < bar) {
+        el.innerHTML = `<b>No clear call.</b> Passing on <span class="take">${first}</span> costs about
+           ${fmt0(cost[first].cost)} points of value${second
+             ? ` and <span class="take">${second}</span> about ${fmt0(runnerUp)}` : ""} —
+           not enough to reach. Take the best score.` + topLine + heldNote;
+      } else {
+        const pick = bestAt(first);
+        el.innerHTML = `<b>Take a <span class="take">${first}</span>${pick ? `: ${pick.n}` : ""}.</b>
+           Waiting ${wait} picks costs about ${fmt0(cost[first].cost)} points of value there${
+             second ? `, against ${fmt0(runnerUp)} at ${second}` : ""}.` + heldNote;
+      }
     }
   }
 
@@ -1420,11 +1482,11 @@ footer b { color: var(--slate); font-weight: 600; }
   /* ---------- export ---------- */
   document.getElementById("export").addEventListener("click", async () => {
     const header =
-      "rank,player,eligible,slot,team,age,points,floor,p20,p80,ceiling,value,expected_games";
+      "rank,player,eligible,slot,team,age,points,floor,p20,p80,ceiling,value,score,expected_games";
     const lines = state.mine.map((i, n) => {
       const p = P[i];
       return [n + 1, `"${p.n}"`, `"${eligible(p).join("/")}"`, p.slot, p.t, p.a ?? "", fmt0(p.m), fmt0(p.f), fmt0(p.l),
-              fmt0(p.h), fmt0(p.c), Math.round(p.vorp), fmt0(p.g)].join(",");
+              fmt0(p.h), fmt0(p.c), Math.round(p.vorp), Math.round(p.rs), fmt0(p.g)].join(",");
     });
     const csv = [header, ...lines].join("\n");
     const downloads = await useCap("downloads");

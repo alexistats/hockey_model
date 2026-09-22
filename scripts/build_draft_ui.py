@@ -20,6 +20,7 @@ import pandas as pd
 
 from hockey.export import replacement_slots
 from hockey.seasons import PROJECTION_SEASON, SEASON_LENGTH, season_label
+from hockey.serve.recommend import DEFAULT_RULES, NO_CLEAR_CALL, URGENT
 from hockey.yahoo.eligibility import load_csv as load_eligibility
 from hockey.yahoo.settings import load_roster_from_yaml, load_scoring_from_yaml
 
@@ -271,6 +272,11 @@ def main() -> None:
         "nTeams": N_TEAMS,
         "draftSlot": DRAFT_SLOT,
         "snake": SNAKE,
+        # The draft API's own rules and thresholds, so the page and the bot
+        # make the same call from the same numbers rather than two copies.
+        "rules": DEFAULT_RULES,
+        "noClearCall": NO_CLEAR_CALL,
+        "urgent": URGENT,
         "cats": list(ORDER),
         "catLabels": LABELS,
         "weights": weights,
@@ -304,6 +310,10 @@ def main() -> None:
             "Tiers are struck within a position, so a tier 4 "
             "defenceman and a tier 4 centre are not the same player; value bands are the "
             "comparable read, because replacement level is already per position. "
+            "<b>Score</b> is the order the draft bot picks in: a blend of the 20th and "
+            "80th percentiles, each above replacement, that leans on the cautious end "
+            "in the first round and on the upside by the last. Early misses cannot be "
+            "replaced and late ones cost a waiver claim. "
             "<b>Value if I wait</b> assumes the next picks come off the top of the value "
             "board - the room will not do exactly that, so read it as the direction and "
             "rough size of the cost, not a forecast. "
