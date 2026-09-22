@@ -191,3 +191,91 @@ def test_every_pick_is_claimed_by_exactly_one_seat(slot):
         if other != slot:
             assert not (mine & theirs), f"slot {slot} collides with slot {other}"
     assert len(mine) == 10
+
+
+# --- risk posture and the positional read -----------------------------------
+
+
+def test_the_risk_weight_ramps_from_cautious_to_ambitious():
+    from hockey.serve.recommend import risk_weight
+
+    assert risk_weight(1, 17, 0.2, 0.8) == pytest.approx(0.2)
+    assert risk_weight(17, 17, 0.2, 0.8) == pytest.approx(0.8)
+    assert risk_weight(9, 17, 0.2, 0.8) == pytest.approx(0.5)
+    # Past the last round (a longer draft than the roster) it holds, not overshoots.
+    assert risk_weight(25, 17, 0.2, 0.8) == pytest.approx(0.8)
+
+
+def test_the_risk_score_is_measured_over_replacement_not_raw():
+    """The bug this was written for: ranked by raw floor, a bot took every
+    forward before any defenceman, because defencemen score fewer raw points.
+    Over replacement, a steady defenceman can out-floor a volatile forward."""
+    from hockey.serve.recommend import add_risk_score
+
+    board = pd.DataFrame(
+        {
+            "player": ["steady D", "volatile C"],
+            "p20": [330.0, 350.0],
+            "p80": [420.0, 560.0],
+            "replacement": [209.0, 281.0],
+        }
+    )
+    early = add_risk_score(board, 0.2).set_index("player")["risk_score"]
+    late = add_risk_score(board, 0.8).set_index("player")["risk_score"]
+    assert early["steady D"] > early["volatile C"]  # raw p20 says the opposite
+    assert late["volatile C"] > late["steady D"]
+
+
+def test_the_positional_read_names_a_position_only_when_the_gap_is_real():
+    from hockey.serve.recommend import positional_read
+
+    def cost(**kw):
+        return {p: {"best_now": 0, "best_after": 0, "cost": c} for p, c in kw.items()}
+
+    clear = positional_read(cost(C=177, LW=64, D=30), {"C": 1, "LW": 1, "D": 2}, 7)
+    assert clear["call"] == "position" and clear["position"] == "C"
+    assert clear["urgent"] == ["C", "D", "LW"]
+
+    close = positional_read(cost(C=40, LW=35), {"C": 1, "LW": 1}, 7)
+    assert close["call"] == "no_clear_call" and close["position"] is None
+
+
+def test_a_filled_position_costs_nothing_to_pass_on():
+    from hockey.serve.recommend import positional_read
+
+    costs = {"C": {"best_now": 0, "best_after": 0, "cost": 177.0}}
+    assert positional_read(costs, {"C": 0}, 7)["call"] == "best_available"
+
+
+def test_a_position_i_may_not_take_is_not_a_reason_to_reach():
+    # Round 1: goalies drain, but the rule forbids one until round 7.
+    from hockey.serve.recommend import positional_read
+
+    costs = {
+        "G": {"best_now": 0, "best_after": 0, "cost": 60.0},
+        "D": {"best_now": 0, "best_after": 0, "cost": 41.0},
+        "C": {"best_now": 0, "best_after": 0, "cost": 10.0},
+    }
+    read = positional_read(costs, {"G": 2, "D": 4, "C": 2}, 12, frozenset({"G"}))
+    assert read["position"] == "D"
+    assert "G" not in read["open_costs"]
+
+
+def test_a_lone_open_position_that_costs_nothing_is_no_call():
+    from hockey.serve.recommend import positional_read
+
+    costs = {"G": {"best_now": 80, "best_after": 80, "cost": 0.0}}
+    assert positional_read(costs, {"G": 1}, 14)["call"] == "no_clear_call"
+
+
+def test_goalies_are_capped():
+    from hockey.serve.recommend import DEFAULT_RULES, _rule_block
+
+    class Row:
+        slot = "G"
+
+    three = pd.DataFrame({"slot": ["G", "G", "G"], "eligible": [("G",)] * 3})
+    state = DraftState(slot=8, n_teams=14)
+    state.reconcile(list(range(4000, 4000 + 14 * 15)))  # round 16
+    assert "cap" in _rule_block(Row(), state, DEFAULT_RULES, three)
+    assert _rule_block(Row(), state, DEFAULT_RULES, three.head(2)) is None

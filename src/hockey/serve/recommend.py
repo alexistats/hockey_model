@@ -17,6 +17,7 @@ cannot, and the rule can never be evaluated.
 
 import logging
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 import pandas as pd
 
@@ -24,10 +25,27 @@ logger = logging.getLogger(__name__)
 
 # Rounds are 1-indexed and inclusive: `min_round` 7 means the first goalie may
 # be taken in round 7 or later.
+#
+# `rank_by` "risk" orders the shortlist by a floor-to-ceiling blend that moves
+# from cautious in the first round to ambitious in the last; "vorp" orders it by
+# the mean alone. `risk_start` and `risk_end` are the weight on the optimistic
+# quantile at each end of the draft.
 DEFAULT_RULES = {
     "goalie_min_round": 7,
     "goalie_second_min_round": 14,
+    # Two start. Without a cap, the late ambitious rounds fill the bench with
+    # backup goalies, whose p80 sits far above the goalie replacement level.
+    "goalie_max": 3,
+    "rank_by": "risk",
+    "risk_start": 0.2,
+    "risk_end": 0.8,
 }
+
+# Below this gap between the two costliest open positions, neither is a reason
+# to reach. The page uses the same two numbers, but not yet the blocked-position
+# and lone-position rules in `positional_read`, so the two can differ there.
+NO_CLEAR_CALL = 8.0
+URGENT = 20.0
 
 
 @dataclass
@@ -41,6 +59,9 @@ class Candidate:
     floor: float
     ceiling: float
     vorp: float
+    p20: float
+    p80: float
+    risk_score: float
     tier: int | None
     replacement_is_lower_bound: bool
     fills_a_need: bool
@@ -92,6 +113,101 @@ def assign_roster(mine: pd.DataFrame, shape: dict[str, int], bench: int) -> dict
     }
 
 
+def risk_weight(current_round: int, n_rounds: int, start: float, end: float) -> float:
+    """Weight on the optimistic quantile at this round, ramped linearly.
+
+    Early picks are expensive and a bust there cannot be replaced, so they lean
+    on the cautious outcome. Late picks are cheap and a miss costs a waiver
+    claim, so they lean on the upside. A ramp rather than a switch, because a
+    board that reorders abruptly at one round is a rule nobody can reason about.
+    """
+    if n_rounds <= 1:
+        return end
+    t = min(1.0, max(0.0, (current_round - 1) / (n_rounds - 1)))
+    return start + t * (end - start)
+
+
+def add_risk_score(valued: pd.DataFrame, weight: float) -> pd.DataFrame:
+    """Blend p20 and p80, each measured over the player's own replacement level.
+
+    Over replacement, not raw. Raw floors rank nearly every defenceman below
+    the forwards, and raw ceilings rank goalies above everyone, because those
+    are the lowest-scoring and the most volatile positions - a bot that ranked
+    by either drafted forwards, then goalies, then defence. Subtracting the
+    replacement level the same way `vorp` does keeps positions comparable.
+
+    p20 and p80 rather than the floor and ceiling: at the extremes the goalies'
+    spread swamps everything else.
+    """
+    out = valued.copy()
+    out["risk_score"] = (1 - weight) * (out["p20"] - out["replacement"]) + weight * (
+        out["p80"] - out["replacement"]
+    )
+    return out
+
+
+def positional_read(
+    cost: dict, needs: dict[str, int], picks: int, blocked: frozenset[str] = frozenset()
+) -> dict:
+    """Whether a position is draining fast enough to be worth reaching for.
+
+    Only open starting slots count - a position I have filled costs me nothing
+    to pass on, however fast it is going - and only positions a rule lets me
+    take now, since "take a G" in round 1 is advice I cannot follow. The costs
+    assume the room drafts straight down the value board, so this is direction
+    and rough size.
+    """
+    open_ = {
+        p: cost[p]["cost"]
+        for p, n in needs.items()
+        if n > 0 and p not in blocked and cost.get(p) and cost[p]["cost"] is not None
+    }
+    base = {
+        "picks_until_my_turn": picks,
+        "open_costs": open_,
+        "urgent": sorted(p for p, c in open_.items() if c >= URGENT),
+        "assumption": "the next picks come straight off the top of the value board",
+    }
+    if not open_:
+        waiting_on = sorted(p for p, n in needs.items() if n > 0 and p in blocked)
+        return {
+            **base,
+            "call": "best_available",
+            "position": None,
+            "reason": (
+                f"the open slots ({', '.join(waiting_on)}) are blocked by a rule for now"
+                if waiting_on
+                else "every starting slot is filled; the bench is positionless"
+            ),
+        }
+    ranked = sorted(open_, key=open_.get, reverse=True)
+    first = ranked[0]
+    second = ranked[1] if len(ranked) > 1 else None
+    # A lone open position still has to clear the bar: waiting on it for
+    # nothing is not a reason to reach.
+    runner_up = open_[second] if second is not None else 0.0
+    if open_[first] - runner_up < NO_CLEAR_CALL:
+        return {
+            **base,
+            "call": "no_clear_call",
+            "position": None,
+            "reason": (
+                f"passing on {first} costs about {open_[first]:.0f}"
+                + (f" and on {second} about {runner_up:.0f}" if second else "")
+                + "; not enough to reach, take the better player"
+            ),
+        }
+    return {
+        **base,
+        "call": "position",
+        "position": first,
+        "reason": (
+            f"waiting {picks} picks costs about {open_[first]:.0f} at {first}"
+            + (f", against {open_[second]:.0f} at {second}" if second else "")
+        ),
+    }
+
+
 def _roster_needs(mine: pd.DataFrame, shape: dict[str, int]) -> dict[str, int]:
     """What is still open, after assigning who I have under the real slots."""
     return assign_roster(mine, shape, bench=0)["needs"]
@@ -116,6 +232,9 @@ def _rule_block(row, state, rules: dict, mine: pd.DataFrame) -> str | None:
         if floor_round and state.current_round < floor_round:
             return f"no goalie before round {floor_round} (currently round {state.current_round})"
         return None
+    cap = rules.get("goalie_max")
+    if cap and goalies_held >= cap:
+        return f"already holding {goalies_held} goalies (cap {cap})"
     second = rules.get("goalie_second_min_round")
     if second and state.current_round < second:
         return f"second goalie not before round {second} (currently round {state.current_round})"
@@ -133,13 +252,21 @@ def shortlist(
 ) -> dict:
     """The top candidates, what separates them, and what a rule cost."""
     rules = {**DEFAULT_RULES, **(rules or {})}
+    if rules["rank_by"] not in ("risk", "vorp"):
+        raise ValueError(f"rank_by must be 'risk' or 'vorp', not {rules['rank_by']!r}")
     mine = board.players[board.players["player_id"].astype(int).isin(state.mine)]
     needs = _roster_needs(mine, board.roster_shape)
     lower_bound = {
         str(r.position): bool(getattr(r, "extrapolated", False)) for r in levels.itertuples()
     }
 
-    ranked = valued.sort_values("vorp", ascending=False)
+    n_rounds = sum(board.roster_shape.values()) + board.bench
+    weight = risk_weight(
+        state.current_round, n_rounds, float(rules["risk_start"]), float(rules["risk_end"])
+    )
+    valued = add_risk_score(valued, weight)
+    key = "risk_score" if rules["rank_by"] == "risk" else "vorp"
+    ranked = valued.sort_values(key, ascending=False)
 
     def make(row, blocked: str | None) -> Candidate:
         eligible = list(row.eligible) if isinstance(row.eligible, tuple | list) else [row.slot]
@@ -153,6 +280,9 @@ def shortlist(
             floor=float(row.floor),
             ceiling=float(row.ceiling),
             vorp=float(row.vorp),
+            p20=float(row.p20),
+            p80=float(row.p80),
+            risk_score=round(float(row.risk_score), 1),
             tier=None if pd.isna(row.tier) else int(row.tier),
             replacement_is_lower_bound=lower_bound.get(str(row.slot), False),
             fills_a_need=needs.get(str(row.slot), 0) > 0,
@@ -194,25 +324,53 @@ def shortlist(
     # What the rules cost, priced rather than asserted.
     rule_cost = None
     if blocked and allowed:
-        best_blocked = max(blocked, key=lambda c: c.vorp)
-        if best_blocked.vorp > allowed[0].vorp:
+        best_blocked = max(blocked, key=lambda c: getattr(c, key))
+        if getattr(best_blocked, key) > getattr(allowed[0], key):
             rule_cost = {
                 "would_have_taken": best_blocked.player,
                 "player_id": best_blocked.player_id,
                 "blocked_by": best_blocked.blocked_by,
                 "vorp_forgone": round(best_blocked.vorp - allowed[0].vorp, 1),
+                "score_forgone": round(best_blocked.risk_score - allowed[0].risk_score, 1),
                 "instead": allowed[0].player,
             }
+
+    # The position read is on the mean, not the risk blend: it asks what a
+    # position will be worth on average at my next turn, which is a question
+    # about the room, not about my appetite for variance.
+    picks = state.picks_until_my_turn()
+    positions = [p for p in board.roster_shape if p in board.slots]
+    waiting = cost_of_waiting(valued, positions, picks)
+    blocked_now = frozenset(
+        p for p in positions if _rule_block(SimpleNamespace(slot=p), state, rules, mine)
+    )
+    read = positional_read(waiting, needs, picks, blocked_now)
+    if read["position"] is not None:
+        best_there = next(
+            (
+                row
+                for row in ranked.itertuples()
+                if read["position"]
+                in (row.eligible if isinstance(row.eligible, tuple | list) else (row.slot,))
+                and _rule_block(row, state, rules, mine) is None
+            ),
+            None,
+        )
+        read["take"] = None if best_there is None else make(best_there, None).__dict__
 
     return {
         "round": state.current_round,
         "overall_pick": state.current_pick,
         "on_the_clock": state.on_the_clock,
-        "picks_until_my_turn": state.picks_until_my_turn(),
+        "picks_until_my_turn": picks,
+        "ranked_by": key,
+        "risk_weight": round(weight, 3),
         "needs": needs,
         "candidates": [c.__dict__ for c in allowed],
         "blocked_by_rules": [c.__dict__ for c in blocked],
         "rule_cost": rule_cost,
+        "cost_of_waiting": waiting,
+        "positional_read": read,
     }
 
 

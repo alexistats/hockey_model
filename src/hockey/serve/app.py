@@ -128,6 +128,11 @@ def create_app(
         if payload.snake is not None:
             state.snake = payload.snake
         if payload.rules is not None:
+            if payload.rules.get("rank_by", "risk") not in ("risk", "vorp"):
+                raise HTTPException(422, "rules.rank_by must be 'risk' or 'vorp'")
+            for k in ("risk_start", "risk_end"):
+                if k in payload.rules and not 0 <= float(payload.rules[k]) <= 1:
+                    raise HTTPException(422, f"rules.{k} must be between 0 and 1")
             rules.update(payload.rules)
         return draft_state()
 
