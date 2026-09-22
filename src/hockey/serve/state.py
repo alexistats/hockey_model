@@ -41,10 +41,26 @@ class DraftState:
     n_teams: int = 14
     snake: bool = True
     picks: list[Pick] = field(default_factory=list)
+    # Picks the server can see happened but cannot attach to a player: a name it
+    # cannot read, or - far more often - a real player who is not in the
+    # modelled pool at all. The board holds 295 skaters and 66 goalies, and a
+    # live draft will take people outside it.
+    #
+    # They are counted, never identified. Dropping them was a quiet bug: the
+    # clock is derived from the pick count, so every off-board pick left the
+    # server believing the draft was a pick behind. That moves the round number,
+    # which gates the goalie rules and the risk ramp, and it moves
+    # picks_until_my_turn, which is what the cost of waiting is measured over.
+    unidentified: int = 0
 
     @property
     def drafted(self) -> set[int]:
         return {p.player_id for p in self.picks}
+
+    @property
+    def total_picks(self) -> int:
+        """Every pick the board shows, identified or not. The clock runs on this."""
+        return len(self.picks) + self.unidentified
 
     @property
     def mine(self) -> list[int]:
@@ -60,11 +76,11 @@ class DraftState:
 
     @property
     def current_pick(self) -> int:
-        return len(self.picks) + 1
+        return self.total_picks + 1
 
     @property
     def current_round(self) -> int:
-        return (len(self.picks) // self.n_teams) + 1
+        return (self.total_picks // self.n_teams) + 1
 
     @property
     def on_the_clock(self) -> bool:
@@ -84,7 +100,9 @@ class DraftState:
             return ahead[1] - ahead[0] - 1 if len(ahead) > 1 else self.n_teams
         return ahead[0] - self.current_pick
 
-    def reconcile(self, observed: list[int], mine: list[int] | None = None) -> dict:
+    def reconcile(
+        self, observed: list[int], mine: list[int] | None = None, unidentified: int = 0
+    ) -> dict:
         """Make the state match a complete observation of the board.
 
         Returns what changed, so a caller can log a correction rather than
@@ -92,6 +110,12 @@ class DraftState:
         a removal means the previous read was wrong - a misparsed name, a pick
         that was undone - and that is worth noticing rather than silently
         absorbing.
+
+        `unidentified` is how many drafted players in *this* observation could
+        not be resolved to a board id. It is set, not added, for the same reason
+        the rest of this is a diff: the observation is a complete statement, so
+        a name that resolves on the next poll stops being counted rather than
+        being counted twice.
         """
         # De-duplicate while preserving the order first seen. The same player
         # reaches here twice more often than it looks: two spellings of one
@@ -127,10 +151,28 @@ class DraftState:
         for pick in kept:
             if pick.player_id in mine_set:
                 pick.by_me = True
+        # With unidentified picks on the board, a pick's true overall number is
+        # unknowable - it depends where those fell - so this is the order seen,
+        # not the draft's numbering. The clock uses `total_picks`, which is.
         for n, pick in enumerate(kept, start=1):
             pick.overall = n
         self.picks = kept
-        return {"added": [int(p) for p in added], "removed": removed, "total": len(self.picks)}
+        self.unidentified = max(0, int(unidentified))
+        if self.unidentified:
+            logger.info(
+                "%d observed pick(s) could not be identified; counted toward the clock "
+                "but attached to nobody. Draft is at pick %d (round %d).",
+                self.unidentified,
+                self.current_pick,
+                self.current_round,
+            )
+        return {
+            "added": [int(p) for p in added],
+            "removed": removed,
+            "total": len(self.picks),
+            "unidentified": self.unidentified,
+            "picks_on_the_board": self.total_picks,
+        }
 
     def take(self, player_id: int, by_me: bool) -> bool:
         """Record one pick. False when it was already known."""
@@ -140,7 +182,9 @@ class DraftState:
                     pick.by_me = True
             return False
         self.picks.append(Pick(player_id=int(player_id), by_me=by_me, overall=len(self.picks) + 1))
+
         return True
 
     def reset(self) -> None:
         self.picks = []
+        self.unidentified = 0

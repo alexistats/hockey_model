@@ -113,6 +113,12 @@ def create_app(
             "picks_until_my_turn": state.picks_until_my_turn(),
             "my_next_picks": [p for p in state.my_pick_numbers() if p >= state.current_pick][:4],
             "drafted": len(state.picks),
+            # Identified against what the board actually shows. A gap means
+            # picks the server cannot name - usually players outside the
+            # modelled pool - which are counted toward the clock but are not in
+            # `drafted` and never will be.
+            "picks_on_the_board": state.total_picks,
+            "unidentified": state.unidentified,
             "mine": state.mine,
             "rules": rules,
         }
@@ -141,7 +147,12 @@ def create_app(
         """Reconcile against a complete observation. The primary write."""
         ids, misses = _resolve_many(payload.names, payload.player_ids)
         mine_ids, mine_misses = _resolve_many(payload.mine, payload.mine_ids)
-        change = state.reconcile(ids, mine_ids)
+        # A pick the server cannot identify is still a pick. Counting the
+        # distinct ones keeps the clock honest without ever attaching a name to
+        # a player - `mine` usually repeats names from `names`, so they are
+        # folded together rather than counted twice.
+        unidentified = len({str(m["raw"]).strip().casefold() for m in misses + mine_misses})
+        change = state.reconcile(ids, mine_ids, unidentified=unidentified)
         if misses:
             # Never guessed, never silently dropped. An unresolved name means
             # the board holds someone this server cannot identify, and acting

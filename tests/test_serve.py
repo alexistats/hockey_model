@@ -395,3 +395,57 @@ def test_a_schedule_pick_with_no_starts_falls_back_rather_than_forcing_one():
         shortlist, {"position": None}, {"pick_kind": "schedule"}, DEFAULT_RULES, "risk_score"
     )
     assert got["player"] == "blocked" and got["why"] == "best score"
+
+
+# --- the clock counts picks it cannot name ---------------------------------
+
+
+def test_a_pick_the_server_cannot_identify_still_moves_the_clock():
+    """The bug this was written for.
+
+    A live draft takes players who are not in the modelled pool at all - the
+    board holds 295 skaters and 66 goalies. Those picks resolved to nothing and
+    were dropped, so the server believed the draft was several picks behind:
+    the round number gates the goalie rules and the risk ramp, and
+    picks_until_my_turn is what the cost of waiting is measured over.
+    """
+    state = DraftState(slot=8, n_teams=14)
+    state.reconcile([101, 102, 103], unidentified=2)
+    assert state.total_picks == 5
+    assert state.current_pick == 6
+    assert len(state.picks) == 3  # still only three players named
+    assert state.drafted == {101, 102, 103}
+
+
+def test_an_unidentified_pick_is_never_attached_to_a_player():
+    state = DraftState()
+    state.reconcile([101], unidentified=3)
+    assert state.drafted == {101}
+    assert state.mine == []
+
+
+def test_a_name_that_resolves_later_is_not_counted_twice():
+    # The observation is a complete statement, so the count is set rather than
+    # accumulated: the bot sending a fuller name next poll must not leave the
+    # clock permanently ahead.
+    state = DraftState()
+    state.reconcile([101, 102], unidentified=1)
+    assert state.total_picks == 3
+    state.reconcile([101, 102, 103], unidentified=0)
+    assert state.total_picks == 3
+    assert state.drafted == {101, 102, 103}
+
+
+def test_unidentified_picks_move_the_round_and_my_turn():
+    state = DraftState(slot=8, n_teams=14)
+    state.reconcile(list(range(200, 200 + 13)), unidentified=1)  # 14 picks: round 2
+    assert state.current_round == 2
+    # My pick is 8; with 14 on the board the next is 21, so 6 picks away.
+    assert state.picks_until_my_turn() == 6
+
+
+def test_reset_clears_the_unidentified_count_too():
+    state = DraftState()
+    state.reconcile([1], unidentified=4)
+    state.reset()
+    assert state.total_picks == 0 and state.current_round == 1
