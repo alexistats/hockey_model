@@ -18,7 +18,7 @@ Base URL `http://127.0.0.1:8899`. Interactive docs at `/docs`.
 | `GET /health` | once at start | `convergence` (r-hat). No convergence block, no draft. |
 | `POST /draft/reset` | before a mock | clears state |
 | `POST /draft/settings` | once, if the draft is not 17 rounds | `{"rules": {"draft_rounds": 16}}` — every deadline is measured against it |
-| `POST /draft/observed` | every time the board changes | `{"names": [...everyone drafted...], "mine": [...my players...]}` |
+| `POST /draft/observed` | every time the board changes | `{"names": [...everyone drafted, in draft order...], "mine": [...my players...]}` |
 | `GET /recommend` | my turn | `recommendation`, and everything behind it |
 | `GET /team/me` | my turn, for the log | `lineup`, `needs`, `bench` |
 | `GET /compare?ids=a,b` | close calls worth explaining | P(A outscores B) |
@@ -26,7 +26,11 @@ Base URL `http://127.0.0.1:8899`. Interactive docs at `/docs`.
 
 `/draft/observed` takes the **complete** list of drafted players every time, not
 the latest pick. The server diffs it, so a missed poll, a double poll or a
-reconnect all heal themselves. If `unresolved` comes back non-empty, **stop and
+reconnect all heal themselves. Send `names` in the order the Picks tab shows
+them, unresolvable names included in their places: the server numbers the picks
+from that order to know which team made each one, which `cost_of_waiting` needs.
+It checks the order against your own picks and reports it as
+`/draft/state.order_check`; an order that fails is ignored, not trusted. If `unresolved` comes back non-empty, **stop and
 ask a human**. Never guess an identity: a wrong id produces a complete,
 plausible projection for the wrong player and nothing downstream can detect it.
 
@@ -67,8 +71,16 @@ close to a coin flip; a recommendation carrying an `injury`.
   picks are planned, and the final two go to schedule fit.
 - **`positional_read`** - `call` is `position`, `no_clear_call` or
   `best_available`. Positions blocked by a rule are already excluded.
-- **`cost_of_waiting`** - per position, the best available now against the best
-  expected at my next turn.
+- **`cost_of_waiting`** - per position, the best available now (`best_now`)
+  against the best expected at my next turn if I pass on the position
+  (`best_after`), the expected loss (`cost`), and `p_best_survives`, the chance
+  the player who is best there now is still there. Expectations over 500
+  simulated rooms: the other teams draft in the room's own order (average pick
+  over saved Yahoo mocks) toward their open slots. All in this turn's value, so
+  the next turn's `best_now` reads a few points higher even when nobody moved -
+  the replacement level sinks as the pool drains.
+- **`room`** - which room model produced those costs, when it was fitted, its
+  held-out accuracy, and whether each team's open slots were read (`needs`).
 - **`blocked_by_rules`** and **`rule_cost`** - who a goalie rule stopped, and
   what it cost. Log `rule_cost` whenever it is non-null.
 - **`context`** - what draft-day data the board carries (schedule span, weeks,
@@ -90,10 +102,11 @@ early a clearly better bench player still wins, while with four picks left for
 four open slots `need_first_margin` is `null` and no gap buys bench depth at all.
 
 This exists because value alone cannot see the end of the draft.
-`cost_of_waiting` correctly reports 0.0 at defence for most of a draft — there is
-always another defenceman — but an unfilled starting slot scores zero for the
-season. That cost is zero for twelve rounds and then enormous, a shape no value
-curve has, so it is counted in picks rather than priced in points.
+`cost_of_waiting` is usually small at defence in the middle rounds - the room
+drafts plenty of defencemen then, but rarely our best one - while an unfilled
+starting slot scores zero for the season. That cost is zero for twelve rounds
+and then enormous, a shape no value curve has, so it is counted in picks rather
+than priced in points.
 
 When a bench player does win, `why` is `need overridden`, and `detail` gives the
 gap and the pressure, so the exception is visible rather than silent.
@@ -130,8 +143,11 @@ flag is not proof of fitness.
   assumes his best eligible slot, so flexible players are double-counted. Read a
   roster from `team/me.lineup`.
 - `projected_points` is a plain sum of means, bench included. Not a lineup score.
-- `cost_of_waiting` assumes the room drafts straight down the value board. It is
-  a direction and a rough size, not a forecast.
+- `cost_of_waiting` is an expectation from a room fitted on Yahoo *mock* rooms,
+  not this league. Out of sample it is unbiased to within 2 points at every
+  position, but a real room of thirteen people may draft differently, and
+  `p_best_survives` is overconfident below about 0.1 - a player well past his
+  usual pick is sometimes a faller that room does not want.
 - **A small edge at a position whose pool has run dry is not an edge.** Centre
   runs out of freely available players around pick 40 in this league: 42 slots
   against about 51 centre-eligible players. When `replacement_free_below` is

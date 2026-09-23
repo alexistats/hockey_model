@@ -37,6 +37,13 @@ class ObservedBoard(BaseModel):
     "here is everything currently drafted", and the server diffs it. That is
     what makes a missed poll, a double poll or a reconnect self-healing rather
     than permanently corrupting.
+
+    `names` is expected in draft order, as Yahoo's pick list shows it, names
+    that will not resolve included in their places. The order is how the
+    server knows which team made each pick - which is what `cost_of_waiting`
+    needs, since a team missing a defenceman drafts one - and it is checked
+    against my own picks before it is believed. An unordered list still works;
+    it just cannot tell the teams apart.
     """
 
     names: list[str] = Field(default_factory=list)
@@ -67,24 +74,38 @@ def create_app(
     rules: dict = dict(recommend_mod.DEFAULT_RULES)
 
     app = FastAPI(title="hockey_models draft API", version="1.0")
+    # Read-only handles for tools that replay a saved draft through the API and
+    # need to see what it saw. Nothing reads these to serve a request.
+    app.state.board = data
+    app.state.draft = state
 
-    def _resolve_many(names: list[str], ids: list[int]) -> tuple[list[int], list[dict]]:
+    def _resolve_many(
+        names: list[str], ids: list[int]
+    ) -> tuple[list[int], list[dict], dict[int, int]]:
+        """Resolved ids, the misses, and each named player's place in `names`.
+
+        `names` is read in draft order - the order Yahoo's pick list shows - so
+        a place is a pick number, and an unresolved name still holds its place.
+        Bare ids carry no place.
+        """
         resolved: list[int] = []
         misses: list[dict] = []
+        order: dict[int, int] = {}
         for pid in ids:
             if resolver.known(pid):
                 resolved.append(int(pid))
             else:
                 misses.append({"raw": str(pid), "reason": "unknown player_id"})
-        for raw in names:
+        for place, raw in enumerate(names, start=1):
             got = resolver.resolve(raw)
             if got.ok:
                 resolved.append(int(got.player_id))
+                order.setdefault(int(got.player_id), place)
             else:
                 misses.append(
                     {"raw": raw, "reason": got.method, "candidates": list(got.candidates)}
                 )
-        return resolved, misses
+        return resolved, misses, order
 
     def _valued():
         return board_mod.revalue(data, state.drafted)
@@ -99,6 +120,7 @@ def create_app(
             "goalie_board": None if goalies is None else str(goalies),
             "convergence": data.fitted,
             "slots": data.slots,
+            "room": data.room.describe() if data.room is not None else None,
         }
 
     @app.get("/draft/state")
@@ -120,6 +142,9 @@ def create_app(
             "picks_on_the_board": state.total_picks,
             "unidentified": state.unidentified,
             "mine": state.mine,
+            # Whether the observed order matched my own picks' seats, which is
+            # what lets the room model read each team's open slots.
+            "order_check": dict(zip(("status", "detail"), state.order_check(), strict=True)),
             "rules": rules,
         }
 
@@ -145,14 +170,16 @@ def create_app(
     @app.post("/draft/observed")
     def observed(payload: ObservedBoard):
         """Reconcile against a complete observation. The primary write."""
-        ids, misses = _resolve_many(payload.names, payload.player_ids)
-        mine_ids, mine_misses = _resolve_many(payload.mine, payload.mine_ids)
+        ids, misses, order = _resolve_many(payload.names, payload.player_ids)
+        mine_ids, mine_misses, _ = _resolve_many(payload.mine, payload.mine_ids)
         # A pick the server cannot identify is still a pick. Counting the
         # distinct ones keeps the clock honest without ever attaching a name to
         # a player - `mine` usually repeats names from `names`, so they are
         # folded together rather than counted twice.
         unidentified = len({str(m["raw"]).strip().casefold() for m in misses + mine_misses})
-        change = state.reconcile(ids, mine_ids, unidentified=unidentified)
+        change = state.reconcile(
+            ids, mine_ids, unidentified=unidentified, order=order if payload.names else None
+        )
         if misses:
             # Never guessed, never silently dropped. An unresolved name means
             # the board holds someone this server cannot identify, and acting
@@ -253,12 +280,11 @@ def create_app(
     def team_me():
         valued, levels = _valued()
         mine = data.players[data.players["player_id"].astype(int).isin(state.mine)]
-        positions = [p for p in data.roster_shape if p in data.slots]
         # Assigned under the real slots, not counted off a column: four
         # RW-eligible players are not four right wings if two of them are also
         # centres and the centre slots are open.
         roster = recommend_mod.assign_roster(mine, data.roster_shape, data.bench)
-        waiting = recommend_mod.cost_of_waiting(valued, positions, state.picks_until_my_turn())
+        waiting, room = recommend_mod.cost_of_waiting(data, state, valued)
         return {
             "roster": mine[
                 ["player_id", "player", "slot", "team", "mean", "floor", "ceiling"]
@@ -270,6 +296,7 @@ def create_app(
             "bench_slots_left": roster["bench_slots_left"],
             "projected_points": round(float(mine["mean"].sum()), 1) if len(mine) else 0.0,
             "cost_of_waiting": waiting,
+            "room": room,
             "replacement": levels.to_dict("records"),
             "note": (
                 "projected_points is a plain sum of every drafted player's mean and is "

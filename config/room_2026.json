@@ -1,0 +1,1590 @@
+{
+ "what": "How the rest of a Yahoo draft room picks, fitted on saved mock drafts. Read by hockey.serve for cost_of_waiting. Rebuild with python -m hockey.serve.room --mocks <dir>.",
+ "source": "10 saved Yahoo mock rooms, 1923 picks by other managers (261 of players not on our board)",
+ "fitted": "2026-09-23",
+ "rooms": 10,
+ "picks": 1923,
+ "order_weight": 7.5537,
+ "need_weight": 0.6967,
+ "off_board": -35.6736,
+ "heldout": {
+  "nats_per_pick": {
+   "order and need": 3.15,
+   "order only": 3.1708,
+   "uniform": 5.5632
+  },
+  "picks": 1923,
+  "how": "leave one room out: average pick and coefficients refitted without it"
+ },
+ "undrafted": 237.0,
+ "players": [
+  {
+   "player_id": 8478402,
+   "adp": 1.0,
+   "rooms": 8,
+   "taken": 8,
+   "player": "Connor McDavid"
+  },
+  {
+   "player_id": 8477492,
+   "adp": 2.1,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Nathan MacKinnon"
+  },
+  {
+   "player_id": 8476453,
+   "adp": 3.8,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Nikita Kucherov"
+  },
+  {
+   "player_id": 8484801,
+   "adp": 3.9,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Macklin Celebrini"
+  },
+  {
+   "player_id": 8477934,
+   "adp": 4.2,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Leon Draisaitl"
+  },
+  {
+   "player_id": 8477956,
+   "adp": 6.6,
+   "rooms": 10,
+   "taken": 10,
+   "player": "David Pastrnak"
+  },
+  {
+   "player_id": 8478864,
+   "adp": 7.67,
+   "rooms": 9,
+   "taken": 9,
+   "player": "Kirill Kaprizov"
+  },
+  {
+   "player_id": 8480069,
+   "adp": 8.5,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Cale Makar"
+  },
+  {
+   "player_id": 8480027,
+   "adp": 10.8,
+   "rooms": 5,
+   "taken": 5,
+   "player": "Jason Robertson"
+  },
+  {
+   "player_id": 8480018,
+   "adp": 11.7,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Nick Suzuki"
+  },
+  {
+   "player_id": 8476883,
+   "adp": 12.9,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Andrei Vasilevskiy"
+  },
+  {
+   "player_id": 8480800,
+   "adp": 13.5,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Quinn Hughes"
+  },
+  {
+   "player_id": 8480039,
+   "adp": 14.0,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Martin Necas"
+  },
+  {
+   "player_id": 8480803,
+   "adp": 14.22,
+   "rooms": 9,
+   "taken": 9,
+   "player": "Evan Bouchard"
+  },
+  {
+   "player_id": 8478460,
+   "adp": 14.6,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Zach Werenski"
+  },
+  {
+   "player_id": 8479318,
+   "adp": 15.0,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Auston Matthews"
+  },
+  {
+   "player_id": 8482740,
+   "adp": 17.29,
+   "rooms": 7,
+   "taken": 7,
+   "player": "Wyatt Johnston"
+  },
+  {
+   "player_id": 8481559,
+   "adp": 17.44,
+   "rooms": 9,
+   "taken": 9,
+   "player": "Jack Hughes"
+  },
+  {
+   "player_id": 8480801,
+   "adp": 19.6,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Brady Tkachuk"
+  },
+  {
+   "player_id": 8481540,
+   "adp": 20.5,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Cole Caufield"
+  },
+  {
+   "player_id": 8483457,
+   "adp": 21.4,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Lane Hutson"
+  },
+  {
+   "player_id": 8478403,
+   "adp": 21.5,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Jack Eichel"
+  },
+  {
+   "player_id": 8481557,
+   "adp": 22.0,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Matt Boldy"
+  },
+  {
+   "player_id": 8478420,
+   "adp": 24.2,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Mikko Rantanen"
+  },
+  {
+   "player_id": 8479979,
+   "adp": 27.4,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Jake Oettinger"
+  },
+  {
+   "player_id": 8480313,
+   "adp": 28.56,
+   "rooms": 9,
+   "taken": 9,
+   "player": "Logan Thompson"
+  },
+  {
+   "player_id": 8483445,
+   "adp": 29.5,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Cutter Gauthier"
+  },
+  {
+   "player_id": 8479314,
+   "adp": 31.2,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Matthew Tkachuk"
+  },
+  {
+   "player_id": 8478398,
+   "adp": 31.22,
+   "rooms": 9,
+   "taken": 9,
+   "player": "Kyle Connor"
+  },
+  {
+   "player_id": 8479420,
+   "adp": 31.44,
+   "rooms": 9,
+   "taken": 9,
+   "player": "Tage Thompson"
+  },
+  {
+   "player_id": 8478009,
+   "adp": 33.33,
+   "rooms": 9,
+   "taken": 9,
+   "player": "Ilya Sorokin"
+  },
+  {
+   "player_id": 8485366,
+   "adp": 33.9,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Matthew Schaefer"
+  },
+  {
+   "player_id": 8480839,
+   "adp": 34.9,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Rasmus Dahlin"
+  },
+  {
+   "player_id": 8477404,
+   "adp": 35.5,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Jake Guentzel"
+  },
+  {
+   "player_id": 8476460,
+   "adp": 36.4,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Mark Scheifele"
+  },
+  {
+   "player_id": 8479542,
+   "adp": 37.56,
+   "rooms": 9,
+   "taken": 9,
+   "player": "Brandon Hagel"
+  },
+  {
+   "player_id": 8482699,
+   "adp": 39.2,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Dylan Guenther"
+  },
+  {
+   "player_id": 8477939,
+   "adp": 39.5,
+   "rooms": 10,
+   "taken": 10,
+   "player": "William Nylander"
+  },
+  {
+   "player_id": 8484153,
+   "adp": 41.3,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Leo Carlsson"
+  },
+  {
+   "player_id": 8479343,
+   "adp": 41.4,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Clayton Keller"
+  },
+  {
+   "player_id": 8478048,
+   "adp": 41.5,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Igor Shesterkin"
+  },
+  {
+   "player_id": 8479337,
+   "adp": 43.33,
+   "rooms": 6,
+   "taken": 6,
+   "player": "Alex DeBrincat"
+  },
+  {
+   "player_id": 8477933,
+   "adp": 43.9,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Sam Reinhart"
+  },
+  {
+   "player_id": 8482116,
+   "adp": 45.3,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Tim Stützle"
+  },
+  {
+   "player_id": 8475809,
+   "adp": 48.2,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Scott Wedgewood"
+  },
+  {
+   "player_id": 8478483,
+   "adp": 48.4,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Mitch Marner"
+  },
+  {
+   "player_id": 8478550,
+   "adp": 49.3,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Artemi Panarin"
+  },
+  {
+   "player_id": 8481542,
+   "adp": 52.0,
+   "rooms": 4,
+   "taken": 4,
+   "player": "Moritz Seider"
+  },
+  {
+   "player_id": 8471675,
+   "adp": 52.22,
+   "rooms": 9,
+   "taken": 9,
+   "player": "Sidney Crosby"
+  },
+  {
+   "player_id": 8477960,
+   "adp": 54.3,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Adrian Kempe"
+  },
+  {
+   "player_id": 8483515,
+   "adp": 55.0,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Juraj Slafkovský"
+  },
+  {
+   "player_id": 8476887,
+   "adp": 55.11,
+   "rooms": 9,
+   "taken": 9,
+   "player": "Filip Forsberg"
+  },
+  {
+   "player_id": 8476945,
+   "adp": 56.0,
+   "rooms": 9,
+   "taken": 9,
+   "player": "Connor Hellebuyck"
+  },
+  {
+   "player_id": 8479345,
+   "adp": 57.3,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Jakob Chychrun"
+  },
+  {
+   "player_id": 8480893,
+   "adp": 58.22,
+   "rooms": 9,
+   "taken": 9,
+   "player": "Kirill Marchenko"
+  },
+  {
+   "player_id": 8478178,
+   "adp": 58.3,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Darren Raddysh"
+  },
+  {
+   "player_id": 8484144,
+   "adp": 59.5,
+   "rooms": 8,
+   "taken": 8,
+   "player": "Connor Bedard"
+  },
+  {
+   "player_id": 8479323,
+   "adp": 59.6,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Adam Fox"
+  },
+  {
+   "player_id": 8482105,
+   "adp": 60.1,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Jake Sanderson"
+  },
+  {
+   "player_id": 8482661,
+   "adp": 62.5,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Jesper Wallstedt"
+  },
+  {
+   "player_id": 8480023,
+   "adp": 63.1,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Robert Thomas"
+  },
+  {
+   "player_id": 8476459,
+   "adp": 67.2,
+   "rooms": 5,
+   "taken": 5,
+   "player": "Mika Zibanejad"
+  },
+  {
+   "player_id": 8482078,
+   "adp": 68.1,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Lucas Raymond"
+  },
+  {
+   "player_id": 8478010,
+   "adp": 71.9,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Brayden Point"
+  },
+  {
+   "player_id": 8481604,
+   "adp": 72.1,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Pavel Dorofeyev"
+  },
+  {
+   "player_id": 8479407,
+   "adp": 73.3,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Jesper Bratt"
+  },
+  {
+   "player_id": 8474593,
+   "adp": 73.8,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Jacob Markstrom"
+  },
+  {
+   "player_id": 8478427,
+   "adp": 76.7,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Sebastian Aho"
+  },
+  {
+   "player_id": 8480280,
+   "adp": 77.5,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Jeremy Swayman"
+  },
+  {
+   "player_id": 8478449,
+   "adp": 79.2,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Roope Hintz"
+  },
+  {
+   "player_id": 8480208,
+   "adp": 79.8,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Drake Batherson"
+  },
+  {
+   "player_id": 8478872,
+   "adp": 80.22,
+   "rooms": 9,
+   "taken": 9,
+   "player": "Karel Vejmelka"
+  },
+  {
+   "player_id": 8474578,
+   "adp": 81.8,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Erik Karlsson"
+  },
+  {
+   "player_id": 8483548,
+   "adp": 82.2,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Brandon Bussi"
+  },
+  {
+   "player_id": 8482077,
+   "adp": 82.44,
+   "rooms": 9,
+   "taken": 9,
+   "player": "Dylan Holloway"
+  },
+  {
+   "player_id": 8483431,
+   "adp": 84.0,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Logan Cooley"
+  },
+  {
+   "player_id": 8480036,
+   "adp": 84.1,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Miro Heiskanen"
+  },
+  {
+   "player_id": 8481605,
+   "adp": 85.22,
+   "rooms": 9,
+   "taken": 9,
+   "player": "Jackson LaCombe"
+  },
+  {
+   "player_id": 8475786,
+   "adp": 86.7,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Zach Hyman"
+  },
+  {
+   "player_id": 8482487,
+   "adp": 87.4,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Jakub Dobes"
+  },
+  {
+   "player_id": 8474600,
+   "adp": 88.0,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Roman Josi"
+  },
+  {
+   "player_id": 8478414,
+   "adp": 90.1,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Timo Meier"
+  },
+  {
+   "player_id": 8476468,
+   "adp": 90.2,
+   "rooms": 10,
+   "taken": 10,
+   "player": "J.T. Miller"
+  },
+  {
+   "player_id": 8480830,
+   "adp": 91.0,
+   "rooms": 5,
+   "taken": 5,
+   "player": "Andrei Svechnikov"
+  },
+  {
+   "player_id": 8477951,
+   "adp": 91.56,
+   "rooms": 9,
+   "taken": 9,
+   "player": "Nick Schmaltz"
+  },
+  {
+   "player_id": 8474590,
+   "adp": 97.9,
+   "rooms": 10,
+   "taken": 10,
+   "player": "John Carlson"
+  },
+  {
+   "player_id": 8482720,
+   "adp": 98.5,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Matthew Knies"
+  },
+  {
+   "player_id": 8482122,
+   "adp": 99.6,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Brock Faber"
+  },
+  {
+   "player_id": 8478406,
+   "adp": 100.3,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Mackenzie Blackwood"
+  },
+  {
+   "player_id": 8477500,
+   "adp": 100.6,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Bo Horvat"
+  },
+  {
+   "player_id": 8479410,
+   "adp": 102.4,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Mikhail Sergachev"
+  },
+  {
+   "player_id": 8479987,
+   "adp": 102.4,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Morgan Geekie"
+  },
+  {
+   "player_id": 8477949,
+   "adp": 106.3,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Alex Tuch"
+  },
+  {
+   "player_id": 8477504,
+   "adp": 106.4,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Josh Morrissey"
+  },
+  {
+   "player_id": 8479325,
+   "adp": 107.3,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Charlie McAvoy"
+  },
+  {
+   "player_id": 8475913,
+   "adp": 108.1,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Mark Stone"
+  },
+  {
+   "player_id": 8476880,
+   "adp": 109.5,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Tom Wilson"
+  },
+  {
+   "player_id": 8471214,
+   "adp": 110.33,
+   "rooms": 9,
+   "taken": 8,
+   "player": "Alex Ovechkin"
+  },
+  {
+   "player_id": 8475683,
+   "adp": 111.5,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Sergei Bobrovsky"
+  },
+  {
+   "player_id": 8477447,
+   "adp": 115.0,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Shea Theodore"
+  },
+  {
+   "player_id": 8476906,
+   "adp": 115.8,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Shayne Gostisbehere"
+  },
+  {
+   "player_id": 8475810,
+   "adp": 119.67,
+   "rooms": 9,
+   "taken": 8,
+   "player": "Bryan Rust"
+  },
+  {
+   "player_id": 8476483,
+   "adp": 121.4,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Rickard Rakell"
+  },
+  {
+   "player_id": 8474564,
+   "adp": 121.56,
+   "rooms": 9,
+   "taken": 9,
+   "player": "Steven Stamkos"
+  },
+  {
+   "player_id": 8482109,
+   "adp": 121.7,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Alexis Lafrenière"
+  },
+  {
+   "player_id": 8475166,
+   "adp": 123.4,
+   "rooms": 10,
+   "taken": 9,
+   "player": "John Tavares"
+  },
+  {
+   "player_id": 8481524,
+   "adp": 123.89,
+   "rooms": 9,
+   "taken": 9,
+   "player": "Bowen Byram"
+  },
+  {
+   "player_id": 8477940,
+   "adp": 126.8,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Nikolaj Ehlers"
+  },
+  {
+   "player_id": 8475167,
+   "adp": 127.56,
+   "rooms": 9,
+   "taken": 8,
+   "player": "Victor Hedman"
+  },
+  {
+   "player_id": 8482124,
+   "adp": 128.7,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Quinton Byfield"
+  },
+  {
+   "player_id": 8477346,
+   "adp": 129.43,
+   "rooms": 7,
+   "taken": 7,
+   "player": "MacKenzie Weegar"
+  },
+  {
+   "player_id": 8480045,
+   "adp": 132.0,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Ukko-Pekka Luukkonen"
+  },
+  {
+   "player_id": 8480002,
+   "adp": 132.1,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Nico Hischier"
+  },
+  {
+   "player_id": 8482730,
+   "adp": 132.7,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Brandt Clarke"
+  },
+  {
+   "player_id": 8484166,
+   "adp": 134.33,
+   "rooms": 9,
+   "taken": 9,
+   "player": "Adam Fantilli"
+  },
+  {
+   "player_id": 8480865,
+   "adp": 136.2,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Noah Dobson"
+  },
+  {
+   "player_id": 8477946,
+   "adp": 136.7,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Dylan Larkin"
+  },
+  {
+   "player_id": 8482093,
+   "adp": 137.0,
+   "rooms": 3,
+   "taken": 3,
+   "player": "Seth Jarvis"
+  },
+  {
+   "player_id": 8479394,
+   "adp": 139.2,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Carter Hart"
+  },
+  {
+   "player_id": 8476462,
+   "adp": 139.9,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Dougie Hamilton"
+  },
+  {
+   "player_id": 8482684,
+   "adp": 140.0,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Luke Hughes"
+  },
+  {
+   "player_id": 8478439,
+   "adp": 141.9,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Travis Konecny"
+  },
+  {
+   "player_id": 8476999,
+   "adp": 142.2,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Linus Ullmark"
+  },
+  {
+   "player_id": 8477986,
+   "adp": 145.5,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Brandon Montour"
+  },
+  {
+   "player_id": 8481581,
+   "adp": 145.67,
+   "rooms": 9,
+   "taken": 8,
+   "player": "Thomas Harley"
+  },
+  {
+   "player_id": 8481528,
+   "adp": 146.29,
+   "rooms": 7,
+   "taken": 6,
+   "player": "Dylan Cozens"
+  },
+  {
+   "player_id": 8477935,
+   "adp": 146.6,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Sam Bennett"
+  },
+  {
+   "player_id": 8477495,
+   "adp": 147.3,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Seth Jones"
+  },
+  {
+   "player_id": 8480981,
+   "adp": 148.3,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Joel Hofer"
+  },
+  {
+   "player_id": 8478435,
+   "adp": 148.4,
+   "rooms": 10,
+   "taken": 10,
+   "player": "Dan Vladar"
+  },
+  {
+   "player_id": 8478407,
+   "adp": 150.78,
+   "rooms": 9,
+   "taken": 8,
+   "player": "Vince Dunn"
+  },
+  {
+   "player_id": 8482982,
+   "adp": 151.44,
+   "rooms": 9,
+   "taken": 8,
+   "player": "Jet Greaves"
+  },
+  {
+   "player_id": 8481598,
+   "adp": 152.89,
+   "rooms": 9,
+   "taken": 8,
+   "player": "Philip Broberg"
+  },
+  {
+   "player_id": 8478397,
+   "adp": 152.9,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Rasmus Andersson"
+  },
+  {
+   "player_id": 8480807,
+   "adp": 154.1,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Mattias Samuelsson"
+  },
+  {
+   "player_id": 8477424,
+   "adp": 155.67,
+   "rooms": 3,
+   "taken": 3,
+   "player": "Juuse Saros"
+  },
+  {
+   "player_id": 8475172,
+   "adp": 157.1,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Nazem Kadri"
+  },
+  {
+   "player_id": 8481519,
+   "adp": 157.2,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Spencer Knight"
+  },
+  {
+   "player_id": 8479425,
+   "adp": 158.1,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Filip Hronek"
+  },
+  {
+   "player_id": 8478493,
+   "adp": 159.3,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Joel Eriksson Ek"
+  },
+  {
+   "player_id": 8478469,
+   "adp": 162.2,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Thomas Chabot"
+  },
+  {
+   "player_id": 8476885,
+   "adp": 164.89,
+   "rooms": 9,
+   "taken": 8,
+   "player": "Jacob Trouba"
+  },
+  {
+   "player_id": 8477498,
+   "adp": 170.43,
+   "rooms": 7,
+   "taken": 6,
+   "player": "Darnell Nurse"
+  },
+  {
+   "player_id": 8479385,
+   "adp": 170.6,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Jordan Kyrou"
+  },
+  {
+   "player_id": 8475753,
+   "adp": 175.0,
+   "rooms": 9,
+   "taken": 8,
+   "player": "Justin Faulk"
+  },
+  {
+   "player_id": 8480014,
+   "adp": 176.9,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Gabriel Vilardi"
+  },
+  {
+   "player_id": 8480843,
+   "adp": 177.9,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Lukas Dostal"
+  },
+  {
+   "player_id": 8476454,
+   "adp": 179.4,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Ryan Nugent-Hopkins"
+  },
+  {
+   "player_id": 8482809,
+   "adp": 180.6,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Jackson Blake"
+  },
+  {
+   "player_id": 8478440,
+   "adp": 180.9,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Dylan Strome"
+  },
+  {
+   "player_id": 8475158,
+   "adp": 183.3,
+   "rooms": 10,
+   "taken": 8,
+   "player": "Ryan O'Reilly"
+  },
+  {
+   "player_id": 8484170,
+   "adp": 183.3,
+   "rooms": 10,
+   "taken": 8,
+   "player": "Jacob Fowler"
+  },
+  {
+   "player_id": 8480012,
+   "adp": 183.8,
+   "rooms": 10,
+   "taken": 8,
+   "player": "Elias Pettersson"
+  },
+  {
+   "player_id": 8475754,
+   "adp": 186.1,
+   "rooms": 10,
+   "taken": 8,
+   "player": "Brock Nelson"
+  },
+  {
+   "player_id": 8482667,
+   "adp": 190.4,
+   "rooms": 10,
+   "taken": 8,
+   "player": "William Eklund"
+  },
+  {
+   "player_id": 8482659,
+   "adp": 192.2,
+   "rooms": 10,
+   "taken": 8,
+   "player": "Josh Doan"
+  },
+  {
+   "player_id": 8482175,
+   "adp": 194.8,
+   "rooms": 10,
+   "taken": 8,
+   "player": "JJ Peterka"
+  },
+  {
+   "player_id": 8477409,
+   "adp": 195.7,
+   "rooms": 10,
+   "taken": 8,
+   "player": "Carter Verhaeghe"
+  },
+  {
+   "player_id": 8476434,
+   "adp": 196.0,
+   "rooms": 8,
+   "taken": 6,
+   "player": "John Gibson"
+  },
+  {
+   "player_id": 8477501,
+   "adp": 196.0,
+   "rooms": 10,
+   "taken": 8,
+   "player": "Valeri Nichushkin"
+  },
+  {
+   "player_id": 8476892,
+   "adp": 196.2,
+   "rooms": 10,
+   "taken": 9,
+   "player": "Colton Parayko"
+  },
+  {
+   "player_id": 8476389,
+   "adp": 196.6,
+   "rooms": 10,
+   "taken": 7,
+   "player": "Vincent Trocheck"
+  },
+  {
+   "player_id": 8484258,
+   "adp": 197.0,
+   "rooms": 10,
+   "taken": 8,
+   "player": "Sam Malinski"
+  },
+  {
+   "player_id": 8475168,
+   "adp": 197.1,
+   "rooms": 10,
+   "taken": 8,
+   "player": "Matt Duchene"
+  },
+  {
+   "player_id": 8476881,
+   "adp": 197.4,
+   "rooms": 5,
+   "taken": 3,
+   "player": "Tomas Hertl"
+  },
+  {
+   "player_id": 8477507,
+   "adp": 199.3,
+   "rooms": 10,
+   "taken": 5,
+   "player": "Nikita Zadorov"
+  },
+  {
+   "player_id": 8481656,
+   "adp": 199.3,
+   "rooms": 10,
+   "taken": 8,
+   "player": "Aliaksei Protas"
+  },
+  {
+   "player_id": 8479312,
+   "adp": 201.3,
+   "rooms": 10,
+   "taken": 8,
+   "player": "Alex Lyon"
+  },
+  {
+   "player_id": 8480817,
+   "adp": 205.44,
+   "rooms": 9,
+   "taken": 5,
+   "player": "K'Andre Miller"
+  },
+  {
+   "player_id": 8478975,
+   "adp": 206.11,
+   "rooms": 9,
+   "taken": 7,
+   "player": "Mason Marchment"
+  },
+  {
+   "player_id": 8474141,
+   "adp": 206.6,
+   "rooms": 10,
+   "taken": 8,
+   "player": "Patrick Kane"
+  },
+  {
+   "player_id": 8478401,
+   "adp": 206.7,
+   "rooms": 10,
+   "taken": 8,
+   "player": "Pavel Zacha"
+  },
+  {
+   "player_id": 8484387,
+   "adp": 208.5,
+   "rooms": 10,
+   "taken": 6,
+   "player": "Matvei Michkov"
+  },
+  {
+   "player_id": 8474596,
+   "adp": 209.7,
+   "rooms": 10,
+   "taken": 7,
+   "player": "Jake Allen"
+  },
+  {
+   "player_id": 8475311,
+   "adp": 210.44,
+   "rooms": 9,
+   "taken": 7,
+   "player": "Darcy Kuemper"
+  },
+  {
+   "player_id": 8478396,
+   "adp": 213.8,
+   "rooms": 10,
+   "taken": 5,
+   "player": "Noah Hanifin"
+  },
+  {
+   "player_id": 8480748,
+   "adp": 214.0,
+   "rooms": 5,
+   "taken": 2,
+   "player": "Kiefer Sherwood"
+  },
+  {
+   "player_id": 8482137,
+   "adp": 214.1,
+   "rooms": 10,
+   "taken": 8,
+   "player": "Yaroslav Askarov"
+  },
+  {
+   "player_id": 8480145,
+   "adp": 214.89,
+   "rooms": 9,
+   "taken": 4,
+   "player": "Neal Pionk"
+  },
+  {
+   "player_id": 8473419,
+   "adp": 215.0,
+   "rooms": 9,
+   "taken": 6,
+   "player": "Brad Marchand"
+  },
+  {
+   "player_id": 8478444,
+   "adp": 219.0,
+   "rooms": 10,
+   "taken": 6,
+   "player": "Brock Boeser"
+  },
+  {
+   "player_id": 8478499,
+   "adp": 219.7,
+   "rooms": 10,
+   "taken": 2,
+   "player": "Adin Hill"
+  },
+  {
+   "player_id": 8475798,
+   "adp": 220.8,
+   "rooms": 10,
+   "taken": 4,
+   "player": "Mikael Granlund"
+  },
+  {
+   "player_id": 8475218,
+   "adp": 221.5,
+   "rooms": 10,
+   "taken": 3,
+   "player": "Mattias Ekholm"
+  },
+  {
+   "player_id": 8480015,
+   "adp": 221.5,
+   "rooms": 8,
+   "taken": 3,
+   "player": "Owen Tippett"
+  },
+  {
+   "player_id": 8478038,
+   "adp": 222.3,
+   "rooms": 10,
+   "taken": 4,
+   "player": "Devon Toews"
+  },
+  {
+   "player_id": 8477942,
+   "adp": 225.5,
+   "rooms": 10,
+   "taken": 3,
+   "player": "Kevin Fiala"
+  },
+  {
+   "player_id": 8481692,
+   "adp": 225.67,
+   "rooms": 9,
+   "taken": 4,
+   "player": "Dustin Wolf"
+  },
+  {
+   "player_id": 8480336,
+   "adp": 225.71,
+   "rooms": 7,
+   "taken": 2,
+   "player": "Sean Walker"
+  },
+  {
+   "player_id": 8475200,
+   "adp": 226.8,
+   "rooms": 10,
+   "taken": 2,
+   "player": "Dmitry Orlov"
+  },
+  {
+   "player_id": 8481668,
+   "adp": 226.9,
+   "rooms": 10,
+   "taken": 5,
+   "player": "Arturs Silovs"
+  },
+  {
+   "player_id": 8477451,
+   "adp": 227.8,
+   "rooms": 10,
+   "taken": 3,
+   "player": "Ryan Hartman"
+  },
+  {
+   "player_id": 8477476,
+   "adp": 227.8,
+   "rooms": 10,
+   "taken": 3,
+   "player": "Artturi Lehkonen"
+  },
+  {
+   "player_id": 8476412,
+   "adp": 228.5,
+   "rooms": 10,
+   "taken": 1,
+   "player": "Jordan Binnington"
+  },
+  {
+   "player_id": 8475184,
+   "adp": 229.0,
+   "rooms": 10,
+   "taken": 2,
+   "player": "Chris Kreider"
+  },
+  {
+   "player_id": 8478055,
+   "adp": 229.4,
+   "rooms": 10,
+   "taken": 2,
+   "player": "Gustav Forsling"
+  },
+  {
+   "player_id": 8477479,
+   "adp": 229.9,
+   "rooms": 10,
+   "taken": 2,
+   "player": "Tyler Bertuzzi"
+  },
+  {
+   "player_id": 8477932,
+   "adp": 230.0,
+   "rooms": 10,
+   "taken": 1,
+   "player": "Aaron Ekblad"
+  },
+  {
+   "player_id": 8477955,
+   "adp": 230.5,
+   "rooms": 10,
+   "taken": 1,
+   "player": "Jared McCann"
+  },
+  {
+   "player_id": 8479973,
+   "adp": 230.6,
+   "rooms": 10,
+   "taken": 1,
+   "player": "Stuart Skinner"
+  },
+  {
+   "player_id": 8478882,
+   "adp": 230.8,
+   "rooms": 10,
+   "taken": 2,
+   "player": "Vladislav Gavrikov"
+  },
+  {
+   "player_id": 8482146,
+   "adp": 230.8,
+   "rooms": 10,
+   "taken": 2,
+   "player": "Luke Evangelista"
+  },
+  {
+   "player_id": 8482671,
+   "adp": 231.0,
+   "rooms": 10,
+   "taken": 2,
+   "player": "Owen Power"
+  },
+  {
+   "player_id": 8473512,
+   "adp": 231.3,
+   "rooms": 10,
+   "taken": 1,
+   "player": "Claude Giroux"
+  },
+  {
+   "player_id": 8478498,
+   "adp": 231.3,
+   "rooms": 10,
+   "taken": 2,
+   "player": "Jake DeBrusk"
+  },
+  {
+   "player_id": 8480947,
+   "adp": 231.5,
+   "rooms": 10,
+   "taken": 1,
+   "player": "Kevin Lankinen"
+  },
+  {
+   "player_id": 8479361,
+   "adp": 231.6,
+   "rooms": 10,
+   "taken": 1,
+   "player": "Joseph Woll"
+  },
+  {
+   "player_id": 8470613,
+   "adp": 231.8,
+   "rooms": 10,
+   "taken": 1,
+   "player": "Brent Burns"
+  },
+  {
+   "player_id": 8476399,
+   "adp": 231.9,
+   "rooms": 10,
+   "taken": 2,
+   "player": "Blake Coleman"
+  },
+  {
+   "player_id": 8476875,
+   "adp": 231.9,
+   "rooms": 10,
+   "taken": 1,
+   "player": "Mike Matheson"
+  },
+  {
+   "player_id": 8481617,
+   "adp": 231.9,
+   "rooms": 10,
+   "taken": 1,
+   "player": "Vasily Podkolzin"
+  },
+  {
+   "player_id": 8479406,
+   "adp": 232.6,
+   "rooms": 5,
+   "taken": 1,
+   "player": "Filip Gustavsson"
+  },
+  {
+   "player_id": 8481580,
+   "adp": 232.8,
+   "rooms": 10,
+   "taken": 2,
+   "player": "Connor McMichael"
+  },
+  {
+   "player_id": 8482803,
+   "adp": 233.3,
+   "rooms": 10,
+   "taken": 1,
+   "player": "Olen Zellweger"
+  },
+  {
+   "player_id": 8476312,
+   "adp": 233.5,
+   "rooms": 10,
+   "taken": 1,
+   "player": "Josh Manson"
+  },
+  {
+   "player_id": 8477948,
+   "adp": 233.5,
+   "rooms": 10,
+   "taken": 1,
+   "player": "Travis Sanheim"
+  },
+  {
+   "player_id": 8476853,
+   "adp": 233.8,
+   "rooms": 10,
+   "taken": 1,
+   "player": "Morgan Rielly"
+  },
+  {
+   "player_id": 8478042,
+   "adp": 234.4,
+   "rooms": 10,
+   "taken": 1,
+   "player": "Viktor Arvidsson"
+  },
+  {
+   "player_id": 8474151,
+   "adp": 234.6,
+   "rooms": 10,
+   "taken": 1,
+   "player": "Ryan McDonagh"
+  },
+  {
+   "player_id": 8477964,
+   "adp": 237.0,
+   "rooms": 8,
+   "taken": 0,
+   "player": "Ivan Barbashev"
+  },
+  {
+   "player_id": 8482155,
+   "adp": 237.0,
+   "rooms": 3,
+   "taken": 0,
+   "player": "Alex Laferriere"
+  },
+  {
+   "player_id": 8482157,
+   "adp": 237.0,
+   "rooms": 5,
+   "taken": 0,
+   "player": "Will Cuylle"
+  },
+  {
+   "player_id": 8482476,
+   "adp": 237.0,
+   "rooms": 9,
+   "taken": 0,
+   "player": "Emil Heineman"
+  },
+  {
+   "player_id": 8482762,
+   "adp": 237.0,
+   "rooms": 9,
+   "taken": 0,
+   "player": "Simon Edvinsson"
+  }
+ ]
+}

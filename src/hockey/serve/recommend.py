@@ -64,7 +64,8 @@ CANNOT_PLAY = ("Out", "Injured Reserve", "Suspension")
 
 # Below this gap between the two costliest open positions, neither is a reason
 # to reach. The page uses the same two numbers, but not yet the blocked-position
-# and lone-position rules in `positional_read`, so the two can differ there.
+# and lone-position rules in `positional_read`, and it still prices waiting with
+# the old straight-down-the-board rule, so the two can differ.
 NO_CLEAR_CALL = 8.0
 URGENT = 20.0
 
@@ -180,8 +181,8 @@ def positional_read(
     Only open starting slots count - a position I have filled costs me nothing
     to pass on, however fast it is going - and only positions a rule lets me
     take now, since "take a G" in round 1 is advice I cannot follow. The costs
-    assume the room drafts straight down the value board, so this is direction
-    and rough size.
+    are expected losses over simulated rooms, so a reach here is a bet that
+    pays on average, not a certainty about the next pick.
     """
     open_ = {
         p: cost[p]["cost"]
@@ -192,16 +193,27 @@ def positional_read(
         "picks_until_my_turn": picks,
         "open_costs": open_,
         "urgent": sorted(p for p, c in open_.items() if c >= URGENT),
-        "assumption": "the next picks come straight off the top of the value board",
+        "assumption": (
+            "the other teams draft in the room's own order (average pick over saved "
+            "mock rooms) toward their open slots; each cost is an expected loss"
+        ),
     }
     if not open_:
         waiting_on = sorted(p for p, n in needs.items() if n > 0 and p in blocked)
+        unpriced = sorted(
+            p
+            for p, n in needs.items()
+            if n > 0 and p not in blocked and (not cost.get(p) or cost[p]["cost"] is None)
+        )
         return {
             **base,
             "call": "best_available",
             "position": None,
             "reason": (
-                f"the open slots ({', '.join(waiting_on)}) are blocked by a rule for now"
+                f"no cost of waiting at the open slots ({', '.join(unpriced)}) - there is no "
+                f"room model to say what the other teams will take"
+                if unpriced
+                else f"the open slots ({', '.join(waiting_on)}) are blocked by a rule for now"
                 if waiting_on
                 else "every starting slot is filled; the bench is positionless"
             ),
@@ -237,12 +249,12 @@ def positional_read(
 def roster_pressure(board, state, rules: dict, needs: dict[str, int]) -> dict:
     """How much room is left to defer a starting slot.
 
-    `cost_of_waiting` is a value question and it answers correctly: waiting on
-    defence costs nothing, because there is always another defenceman. What it
-    cannot see is that the draft ends. An unfilled starting slot scores zero for
-    the season, and the cost of deferring it is not the drop in the best
-    available - it is the risk of running out of picks. That cost is zero for
-    most of the draft and then enormous, which is a shape no value curve has.
+    `cost_of_waiting` is a value question: what the best player left at a
+    position will be worth at my next turn. What it cannot see is that the draft
+    ends. An unfilled starting slot scores zero for the season, and the cost of
+    deferring it is not the drop in the best available - it is the risk of
+    running out of picks. That cost is zero for most of the draft and then
+    enormous, which is a shape no value curve has.
 
     So it is counted instead of priced. `slack` is the picks I have beyond the
     slots I still must fill. While it is large a better bench player is worth
@@ -517,7 +529,7 @@ def shortlist(
     # about the room, not about my appetite for variance.
     picks = state.picks_until_my_turn()
     positions = [p for p in board.roster_shape if p in board.slots]
-    waiting = cost_of_waiting(valued, positions, picks)
+    waiting, room = cost_of_waiting(board, state, valued)
     blocked_now = frozenset(
         p for p in positions if _rule_block(SimpleNamespace(slot=p), state, rules, mine)
     )
@@ -550,6 +562,7 @@ def shortlist(
         "blocked_by_rules": [c.__dict__ for c in blocked],
         "rule_cost": rule_cost,
         "cost_of_waiting": waiting,
+        "room": room,
         "positional_read": read,
         "plan": plan,
         "roster_pressure": pressure,
@@ -681,33 +694,61 @@ def _recommend(
     }
 
 
-def cost_of_waiting(valued: pd.DataFrame, positions: list[str], picks: int) -> dict:
-    """Best available now against best available after `picks` more selections.
+def cost_of_waiting(board, state, valued: pd.DataFrame) -> tuple[dict, dict]:
+    """What passing on each position costs by my next turn, and how that was read.
 
-    Assumes those picks come off the top of the value board. The room will not
-    do exactly that, so this is the direction and rough size of what passing
-    costs, not a forecast - and it is reported as such rather than as a number
-    that looks more certain than it is.
+    It used to assume the next picks come straight off the top of our value
+    board. The room does not draft off our board - it has never seen it - and
+    measured against the saved mock rooms that assumption priced waiting on C,
+    LW, RW and G 25-50 points too high on average, always on the same side, while
+    reading defence as free for thirteen rounds because no defenceman sat in the
+    top dozen. `hockey.serve.room` has the measurement and the model that
+    replaced it: the room drafts in its own order toward its open slots, and
+    each cost is the expected drop over a few hundred simulated rooms.
+
+    Returns the per-position costs and a description of the room they came from,
+    including whether each team's open slots were read. Without a room model
+    every cost is None, which `positional_read` treats as no reason to reach.
     """
-    pool = valued.sort_values("vorp", ascending=False)
-    taken = set(pool.head(picks)["player_id"].astype(int))
-    out = {}
-    for position in positions:
-        eligible = pool[
-            [
-                position in (r.eligible if isinstance(r.eligible, tuple | list) else (r.slot,))
-                for r in pool.itertuples()
-            ]
-        ]
-        if eligible.empty:
-            out[position] = None
-            continue
-        now = float(eligible.iloc[0]["vorp"])
-        later = eligible[~eligible["player_id"].astype(int).isin(taken)]
-        then = float(later.iloc[0]["vorp"]) if len(later) else None
-        out[position] = {
-            "best_now": round(now, 1),
-            "best_after": None if then is None else round(then, 1),
-            "cost": None if then is None else round(max(0.0, now - then), 1),
+    from hockey.serve.room import SIMS, expected_after, open_slots
+
+    positions = [p for p in board.roster_shape if p in board.slots]
+    room = getattr(board, "room", None)
+    if room is None:
+        return dict.fromkeys(positions), {
+            "source": None,
+            "reason": "no room model loaded, so what the room takes cannot be predicted",
         }
-    return out
+    seats = state.seats_before_my_turn()
+    check, detail = state.order_check()
+    openings = None
+    if check != "inconsistent":
+        rosters = state.rosters_by_seat()
+        players = board.players.set_index(board.players["player_id"].astype(int))
+        openings = {}
+        for seat in set(seats):
+            held = [
+                (pid, float(players.at[pid, "mean"]), _eligible(players.loc[pid]))
+                for pid in rosters.get(seat, [])
+                if pid in players.index
+            ]
+            openings[seat] = open_slots(held, board.roster_shape)
+    costs = expected_after(
+        valued, positions, seats, room, openings, sims=SIMS, seed=state.total_picks
+    )
+    return costs, {
+        **room.describe(),
+        "sims": SIMS,
+        "picks_until_my_turn": len(seats),
+        "seats_before_my_turn": seats,
+        "needs": (
+            f"read from each team's roster ({check}: {detail})"
+            if openings is not None
+            else f"not read - the observed order is {check} ({detail})"
+        ),
+    }
+
+
+def _eligible(row) -> tuple[str, ...]:
+    got = row["eligible"]
+    return tuple(got) if isinstance(got, tuple | list) else (str(row["slot"]),)

@@ -266,3 +266,44 @@ config, and filled to a multiple of the slots the league drafts at each
 position. Stage one's sample is balanced the same way, because it estimates the
 per-position baselines and was previously fitted on whichever few defencemen
 scored like forwards.
+
+## The room drafts in its own order, and the cost of waiting is simulated
+
+`cost_of_waiting` answers one question at each of my turns: if I pass on a
+position now, what is the best player there worth when my turn comes back? The
+answer is entirely about what the other managers take in between, and the first
+version assumed they draft straight down our value board. They cannot - they
+have never seen it.
+
+Measured on the saved Yahoo mock rooms (1,923 picks by other managers):
+
+- From round 4 on the median room pick was the 20th-35th best player left on
+  our board, and within a position the room took our best player there only
+  6-16% of the time.
+- 84-100% of room picks through round 12 filled an open starting slot for the
+  team picking. About one pick in seven was a player not on our board at all.
+- A player's average pick over the other rooms predicts the next room pick far
+  better than our value: held out one room at a time, 3.15 nats per pick on the
+  log of the average pick, against 4.28 for our value. Given the average pick,
+  our value adds nothing.
+
+So the straight run priced waiting on C, LW, RW and G 25-50 points too high on
+every turn, and read defence as free for thirteen rounds of one mock because no
+defenceman sat in the top dozen of our board. Replacing it with the brief's
+suggestion - each team takes our best player at a position it still needs -
+made defence worse, not better: the room does fill its slots, but not with our
+best player.
+
+`hockey.serve.room` models the room as it measured. Each pick is a multinomial
+logit over the players left: the log of the player's average pick, whether he
+fills an open starting slot for the team picking (read off the observed draft
+order, and only after that order is checked against my own picks), and a
+constant for somebody off our board. The costs are expectations over 500
+simulated rooms, scored in our value. Out of sample, on the bot's own turns, the
+bias is under 2 points at every position, where the straight run's was -25 to
+-51 at four of five.
+
+The order comes from mock rooms, which run Yahoo's standard settings, not this
+league's. That is the known weakness. It is still the room's own behaviour
+rather than a board none of the other managers can see, and rebuilding it is one
+command once more mocks are saved.

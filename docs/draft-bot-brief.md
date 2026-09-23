@@ -250,9 +250,15 @@ absence from the board is not evidence a player is bad.
   overwhelmingly for shorthanded points, where most seasons are 0 or 1 — so
   counting a tie as a loss biases those comparisons downward. Prefer
   tie-splitting.
-- **"Cost of waiting"** in the UI assumes the next N picks come off the top of
-  the value board. The room will not do that. It is a direction and rough
-  magnitude, not a forecast.
+- **"Value if I wait" on the page is not `cost_of_waiting` from the API.** The
+  page still assumes the next picks come straight off the top of our value
+  board, and measured against saved Yahoo mock rooms that is wrong in a known
+  direction: it prices waiting on C, LW, RW and G 25-50 points too high and
+  reads defence as free, because the room drafts in its own order (Yahoo's
+  ranking) toward its open slots, not down a board it has never seen. The API
+  simulates that room instead (`hockey.serve.room`, fitted on the saved mocks)
+  and returns expected costs, unbiased to within 2 points at every position out
+  of sample. Trust the API's number; read the page's as a known overstatement.
 
 ### 12. Season and identity gotchas inherited from the warehouse
 

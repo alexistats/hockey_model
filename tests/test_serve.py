@@ -508,9 +508,9 @@ def test_the_reported_mock_now_takes_the_defenceman():
 
 
 def test_the_deadline_outranks_the_positional_reach():
-    """Reach is a value argument and defence's wait cost is exactly 0.0 all
-    draft, so reach would spend the last picks on whichever forward position
-    still drains."""
+    """Reach is a value argument and cannot see the draft ending, so with every
+    remaining pick spoken for it would still spend one on whichever forward
+    position happens to be draining."""
     from hockey.serve.recommend import DEFAULT_RULES, _recommend, roster_pressure
 
     rules = {**DEFAULT_RULES, "draft_rounds": 16}

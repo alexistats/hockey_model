@@ -15,7 +15,10 @@ observation is a complete statement of what is true rather than an increment
 on a history the server has to have followed perfectly.
 
 Order is kept where it can be inferred, because a run on a position is only
-visible in sequence, but it is not load-bearing: the values depend on the set.
+visible in sequence. The values depend on the set. The one thing that leans on
+the order is `cost_of_waiting`, which needs to know which team made each pick,
+because a team missing a defenceman drafts one; and that order is checked
+against my own picks before it is believed.
 """
 
 import logging
@@ -31,6 +34,12 @@ class Pick:
     by_me: bool
     overall: int | None = None
     at: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
+    # The draft's own pick number: the player's place in an observation sent
+    # in draft order, where unidentified picks still hold their places. None
+    # until an ordered observation has included him. `overall` is the order
+    # this server saw picks in, which is not the same thing once a pick it
+    # cannot name has gone by.
+    number: int | None = None
 
 
 @dataclass
@@ -100,8 +109,58 @@ class DraftState:
             return ahead[1] - ahead[0] - 1 if len(ahead) > 1 else self.n_teams
         return ahead[0] - self.current_pick
 
+    def seat_of(self, number: int) -> int:
+        """The seat that makes overall pick `number`."""
+        rnd = (number - 1) // self.n_teams + 1
+        within = (number - 1) % self.n_teams + 1
+        return self.n_teams + 1 - within if (self.snake and rnd % 2 == 0) else within
+
+    def seats_before_my_turn(self) -> list[int]:
+        """Who picks, in order, in the `picks_until_my_turn()` picks ahead."""
+        start = self.current_pick + (1 if self.on_the_clock else 0)
+        return [self.seat_of(start + i) for i in range(self.picks_until_my_turn())]
+
+    def rosters_by_seat(self) -> dict[int, list[int]]:
+        """The board players each seat holds, as far as the draft order says.
+
+        A pick without a number is left out rather than guessed at - except my
+        own, which is mine whatever its number.
+        """
+        out: dict[int, list[int]] = {}
+        for pick in self.picks:
+            if pick.by_me:
+                out.setdefault(self.slot, []).append(pick.player_id)
+            elif pick.number is not None:
+                out.setdefault(self.seat_of(pick.number), []).append(pick.player_id)
+        return out
+
+    def order_check(self) -> tuple[str, str]:
+        """Whether the observed order can be believed, from my own picks.
+
+        My picks are the ones whose seat is known independently: they are mine.
+        Every one of them the observation numbered must fall on my seat. One
+        that does not means the list was not in draft order - a board rendered
+        out of sequence, a duplicated row - and every other team's roster read
+        from it would be wrong.
+        """
+        numbered = [p for p in self.picks if p.by_me and p.number is not None]
+        if not numbered:
+            return "unchecked", "none of my picks has a draft number yet"
+        wrong = [p.number for p in numbered if self.seat_of(p.number) != self.slot]
+        if wrong:
+            return (
+                "inconsistent",
+                f"my pick(s) at {wrong[:4]} belong to seat(s) "
+                f"{sorted({self.seat_of(n) for n in wrong})[:4]}, not {self.slot}",
+            )
+        return "consistent", f"{len(numbered)} of my picks sit on seat {self.slot}"
+
     def reconcile(
-        self, observed: list[int], mine: list[int] | None = None, unidentified: int = 0
+        self,
+        observed: list[int],
+        mine: list[int] | None = None,
+        unidentified: int = 0,
+        order: dict[int, int] | None = None,
     ) -> dict:
         """Make the state match a complete observation of the board.
 
@@ -116,6 +175,10 @@ class DraftState:
         the rest of this is a diff: the observation is a complete statement, so
         a name that resolves on the next poll stops being counted rather than
         being counted twice.
+
+        `order` maps a player to his place in the observation, when it was sent
+        in draft order. It numbers the picks, and is re-read in full every time
+        for the same reason.
         """
         # De-duplicate while preserving the order first seen. The same player
         # reaches here twice more often than it looks: two spellings of one
@@ -151,11 +214,15 @@ class DraftState:
         for pick in kept:
             if pick.player_id in mine_set:
                 pick.by_me = True
-        # With unidentified picks on the board, a pick's true overall number is
-        # unknowable - it depends where those fell - so this is the order seen,
-        # not the draft's numbering. The clock uses `total_picks`, which is.
+        # With unidentified picks on the board, the order seen is not the
+        # draft's numbering - it depends where those fell. The clock uses
+        # `total_picks`, which is. An ordered observation carries the real
+        # numbering, because an unidentified name still holds its place there,
+        # and that goes on `number`.
         for n, pick in enumerate(kept, start=1):
             pick.overall = n
+            if order is not None:
+                pick.number = order.get(pick.player_id)
         self.picks = kept
         self.unidentified = max(0, int(unidentified))
         if self.unidentified:

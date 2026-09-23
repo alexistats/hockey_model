@@ -37,7 +37,9 @@ It feeds a separate draft-bot project. It is not that project.
 - `src/hockey/calibration/` - posterior predictive checks, CRPS, backtests
 - `src/hockey/serve/` - the draft-day HTTP API the bot drives. Holds the live
   draft state and re-reads the posterior against it. **Nothing here may change
-  a posterior either**; it is the export layer with a socket on it.
+  a posterior either**; it is the export layer with a socket on it. `room.py`
+  models the other managers, fitted on draft_bot's saved mocks into
+  `config/room_2026.json`; `cost_of_waiting` is simulated from it.
 - `src/hockey/export/` - the posterior read as a draft board. `draft.py` scores
   draws into fantasy points; `replacement.py` re-reads the same posterior
   against the league's roster shape. **Nothing here may change a posterior.**
@@ -63,6 +65,8 @@ python -m hockey.model.mvp                    # the end-to-end gate
 python -m hockey.model.run_staged --pool 300  # the draft board, ~20 min
 python -m hockey.model.run_goalies            # the goalie board, ~15 min
 python -m hockey.export artifacts/board_v2    # replacement level, value, tiers
+python -m hockey.serve.room --mocks ../draft_bot/artifacts/mocks   # the room model
+python scripts/trace_cost_of_waiting.py <mock dir> --holdout      # check it on a mock
 python scripts/build_draft_ui.py artifacts/board_v2   # the single-file draft page
 python -m hockey.serve --board artifacts/board_v3 \n    --goalies artifacts/goalies_v2 --slot 8           # the draft-day API, port 8899
 
@@ -108,3 +112,8 @@ alembic revision --autogenerate -m "msg"
 - **2026-27 is an 84-game season**, not 82, under the new collective agreement.
 - **`count` is overloaded in Yahoo's JSON.** It marks collection size and it is
   also the number of a roster slot.
+- **The room does not draft off our board.** It drafts in Yahoo's order toward
+  its open slots. Anything that predicts other managers' picks from our value
+  gets forwards and goalies badly wrong; use the room model.
+- **A mock's "best D fell" is not the room's doing if I took him.** Check a
+  prediction of the room only at positions my own pick could not fill.
