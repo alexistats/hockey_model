@@ -134,6 +134,13 @@ class RoomModel:
     heldout: dict = field(default_factory=dict)
     source: str = ""
     players: list[dict] = field(default_factory=list)
+    # Fitted without the need term, for when the teams' rosters cannot be read.
+    # Running the coefficients above with the need term switched off is not the
+    # same room: the off-board constant was fitted against players who mostly
+    # carried the need bonus, and without it the room drafts off our board about
+    # a fifth more often than the saved rooms did.
+    blind_order_weight: float | None = None
+    blind_off_board: float | None = None
 
     def order_of(self, player_ids) -> np.ndarray:
         return np.array([self.adp.get(int(p), self.undrafted) for p in player_ids], dtype=float)
@@ -147,6 +154,12 @@ class RoomModel:
             "order_weight": round(self.order_weight, 4),
             "need_weight": round(self.need_weight, 4),
             "off_board": round(self.off_board, 4),
+            "blind_order_weight": None
+            if self.blind_order_weight is None
+            else round(self.blind_order_weight, 4),
+            "blind_off_board": None
+            if self.blind_off_board is None
+            else round(self.blind_off_board, 4),
             "heldout": self.heldout,
         }
 
@@ -180,6 +193,8 @@ class RoomModel:
             heldout=dict(body.get("heldout") or {}),
             source=str(body.get("source", "")),
             players=list(body["players"]),
+            blind_order_weight=body.get("blind_order_weight"),
+            blind_off_board=body.get("blind_off_board"),
         )
 
 
@@ -213,7 +228,10 @@ def expected_after(
     n, m = len(ids), int(sims)
     rows = np.arange(m)
     rng = np.random.default_rng(seed)
-    base = -room.order_weight * np.log(room.order_of(ids))
+    blind = openings is None and room.blind_order_weight is not None
+    weight = room.blind_order_weight if blind else room.order_weight
+    off_board = room.blind_off_board if blind else room.off_board
+    base = -weight * np.log(room.order_of(ids))
 
     avail = np.ones((m, n), dtype=bool)
     left = None
@@ -230,7 +248,7 @@ def expected_after(
         u[~avail] = -np.inf
         u += rng.gumbel(size=(m, n))
         choice = u.argmax(axis=1)
-        took = u[rows, choice] > room.off_board + rng.gumbel(size=m)
+        took = u[rows, choice] > off_board + rng.gumbel(size=m)
         avail[rows[took], choice[took]] = False
         if left is not None:
             # Into the open slot he is eligible for with the most room, the
@@ -495,6 +513,9 @@ def fit(
     adp, undrafted, table = average_draft_position(rooms, n_teams)
     situations = _situations(rooms, adp, undrafted, players, shape, n_teams)
     theta, _ = _newton(situations)
+    blind, _ = _newton(
+        _situations(rooms, adp, undrafted, players, shape, n_teams, need=False), need=False
+    )
 
     heldout = {"nats_per_pick": {}, "picks": 0}
     scores: dict[str, float] = {"order and need": 0.0, "order only": 0.0, "uniform": 0.0}
@@ -535,6 +556,8 @@ def fit(
         order_weight=float(theta[0]),
         need_weight=float(theta[1]),
         off_board=float(theta[2]),
+        blind_order_weight=float(blind[0]),
+        blind_off_board=float(blind[2]),
         adp=adp,
         undrafted=undrafted,
         fitted=date.today().isoformat(),

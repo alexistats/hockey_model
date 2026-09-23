@@ -21,6 +21,7 @@ import pandas as pd
 from hockey.export import replacement_slots
 from hockey.seasons import PROJECTION_SEASON, SEASON_LENGTH, season_label
 from hockey.serve.recommend import DEFAULT_RULES, NO_CLEAR_CALL, URGENT
+from hockey.serve.room import SIMS, RoomModel
 from hockey.yahoo.eligibility import load_csv as load_eligibility
 from hockey.yahoo.settings import load_roster_from_yaml, load_scoring_from_yaml
 
@@ -137,6 +138,14 @@ def main() -> None:
     if not eligibility:
         print("warning: no eligibility file; the page will use NHL primary positions")
 
+    # The room model the API prices waiting with, so the page prices it the same
+    # way. Without one the page says it cannot, rather than falling back to a room
+    # that drafts down this board - the assumption that was measured wrong.
+    room_file = Path(f"config/room_{PROJECTION_SEASON // 10000}.json")
+    room = RoomModel.load(room_file) if room_file.exists() else None
+    if room is None:
+        print(f"warning: no {room_file}; the page will show no cost of waiting")
+
     # Goalies reach this file already merged into value_board.csv by the export,
     # so they are ranked and tiered; what they still need is their draws. They
     # come from a separate fit and a separate file, and because the board is
@@ -223,6 +232,9 @@ def main() -> None:
                 "h": round(float(row.p80), 1),
                 "c": round(float(row.ceiling), 1),
                 "g": round(float(row.exp_games), 1),
+                # Where the room usually takes him (average pick over saved mock
+                # drafts), or null for a player it never has.
+                "o": None if room is None else room.adp.get(pid),
                 "cat": (
                     None
                     if goalie
@@ -277,6 +289,19 @@ def main() -> None:
         "rules": DEFAULT_RULES,
         "noClearCall": NO_CLEAR_CALL,
         "urgent": URGENT,
+        "room": None
+        if room is None
+        else {
+            "orderWeight": room.order_weight,
+            "needWeight": room.need_weight,
+            "offBoard": room.off_board,
+            "blindOrderWeight": room.blind_order_weight,
+            "blindOffBoard": room.blind_off_board,
+            "undrafted": room.undrafted,
+            "sims": SIMS,
+            "source": room.source,
+            "fitted": room.fitted,
+        },
         "cats": list(ORDER),
         "catLabels": LABELS,
         "weights": weights,
@@ -314,9 +339,16 @@ def main() -> None:
             "80th percentiles, each above replacement, that leans on the cautious end "
             "in the first round and on the upside by the last. Early misses cannot be "
             "replaced and late ones cost a waiver claim. "
-            "<b>Value if I wait</b> assumes the next picks come off the top of the value "
-            "board - the room will not do exactly that, so read it as the direction and "
-            "rough size of the cost, not a forecast. "
+            + (
+                "<b>Value if I wait</b> is the expected drop in the best player left at a "
+                "position by my next turn, over simulated rooms that draft in the room's own "
+                f"order toward each team's open slots - {room.source}, fitted {room.fitted}. "
+                "It is the draft API's model, and a mock room is not this league. Hover it for "
+                "the chance the best player there now is still there. "
+                if room is not None
+                else "<b>Value if I wait</b> is not shown: this page was built without a room "
+                "model, and a room that drafts down this board was measured wrong. "
+            )
             + (
                 "<b>Goalies</b> come from a separate model and a separate fit, so their "
                 "draws are independent of the skaters' - which is exactly what makes "

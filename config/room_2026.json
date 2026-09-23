@@ -7,6 +7,8 @@
  "order_weight": 7.5537,
  "need_weight": 0.6967,
  "off_board": -35.6736,
+ "blind_order_weight": 7.5247,
+ "blind_off_board": -35.8616,
  "heldout": {
   "nats_per_pick": {
    "order and need": 3.15,

@@ -63,9 +63,9 @@ DEFAULT_RULES = {
 CANNOT_PLAY = ("Out", "Injured Reserve", "Suspension")
 
 # Below this gap between the two costliest open positions, neither is a reason
-# to reach. The page uses the same two numbers, but not yet the blocked-position
-# and lone-position rules in `positional_read`, and it still prices waiting with
-# the old straight-down-the-board rule, so the two can differ.
+# to reach. The page uses the same two numbers and the same room model, but not
+# yet the blocked-position and lone-position rules in `positional_read`, so the
+# two can differ there.
 NO_CLEAR_CALL = 8.0
 URGENT = 20.0
 

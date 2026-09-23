@@ -10,6 +10,8 @@ has never seen. These pin both halves of that, and the pieces the fix rests on.
 
 import json
 import math
+import shutil
+import subprocess
 
 import numpy as np
 import pandas as pd
@@ -126,6 +128,29 @@ def test_no_picks_in_between_costs_nothing_and_an_empty_position_is_none():
     out = expected_after(pool, ["LW", "D", "G"], [], room_of(adp))
     assert out["D"]["cost"] == 0.0 and out["D"]["p_best_survives"] == 1.0
     assert out["G"] is None  # nobody on the board plays it
+
+
+def test_a_room_that_cannot_read_the_rosters_uses_the_coefficients_fitted_blind():
+    """Blind is its own fit, not the need-aware one with the bonus switched off.
+
+    Here the blind room is told to draft off the board every time, so it takes
+    nobody and waiting is free; the room that reads the rosters drafts defence.
+    """
+    pool, adp = forwards_over_defence()
+    room = RoomModel(
+        order_weight=7.5,
+        need_weight=0.7,
+        off_board=-80.0,
+        adp=adp,
+        undrafted=240.0,
+        blind_order_weight=7.5,
+        blind_off_board=80.0,
+    )
+    openings = {s: {"LW": 0, "D": 4} for s in set(ROUND_ONE_GAP)}
+    blind = expected_after(pool, ["LW", "D"], ROUND_ONE_GAP, room, None)
+    seeing = expected_after(pool, ["LW", "D"], ROUND_ONE_GAP, room, openings)
+    assert blind["D"]["cost"] == 0.0 and blind["D"]["p_best_survives"] == 1.0
+    assert seeing["D"]["cost"] > 10
 
 
 # --- fitting the room ---------------------------------------------------------
@@ -266,3 +291,92 @@ def test_the_expected_cost_is_never_negative(gap):
     pool, adp = forwards_over_defence()
     out = expected_after(pool, ["LW", "D"], gap, room_of(adp))
     assert all(v["cost"] >= 0 for v in out.values())
+
+
+# --- the page's copy ---------------------------------------------------------
+
+
+def _page_room_block() -> str:
+    """The room simulation the draft page carries, lifted from between its markers."""
+    from pathlib import Path
+
+    html = (Path(__file__).parent.parent / "ui" / "draft_room.html").read_text(encoding="utf-8")
+    start, end = html.index("/* room:begin"), html.index("/* room:end */")
+    return html[start:end]
+
+
+def test_the_page_room_is_self_contained():
+    # The block is run on its own under Node, so it may not lean on the page.
+    block = _page_room_block()
+    assert "function roomExpectedAfter" in block
+    for page_global in ("DATA", "state.", "P[", "document"):
+        assert page_global not in block, page_global
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs Node to run the page's copy")
+@pytest.mark.parametrize("reads_needs", [True, False])
+def test_the_page_simulates_the_same_room_as_the_api(tmp_path, reads_needs):
+    """The page prices waiting with its own copy of the room, in JavaScript.
+
+    A second implementation that quietly disagrees is exactly what this project
+    keeps having to undo, so the two are run on the same room and held together:
+    the same expected best-after and the same survival odds, to within the noise
+    of a few thousand simulated rooms each.
+    """
+    wingers = [(i, "LW", 200.0 - 3 * i) for i in range(20)]
+    defence = [(100 + i, "D", 150.0 - 3 * i) for i in range(20)]
+    adp = {i: 100.0 + 2 * i for i in range(20)} | {100 + i: 101.0 + 2 * i for i in range(20)}
+    pool = pool_of(wingers + defence)
+    room = RoomModel(
+        order_weight=7.5,
+        need_weight=0.7,
+        off_board=-35.0,
+        adp=adp,
+        undrafted=240.0,
+        blind_order_weight=7.3,
+        blind_off_board=-35.5,
+    )
+    openings = {s: {"LW": 1, "D": 3} for s in set(ROUND_ONE_GAP)} if reads_needs else None
+    sims = 4000
+    python = expected_after(pool, ["LW", "D"], ROUND_ONE_GAP, room, openings, sims=sims, seed=1)
+
+    given = {
+        "pool": [
+            {"vorp": float(r.vorp), "elig": list(r.eligible), "adp": adp.get(int(r.player_id))}
+            for r in pool.itertuples()
+        ],
+        "positions": ["LW", "D"],
+        "seats": ROUND_ONE_GAP,
+        "room": {
+            "orderWeight": 7.5,
+            "needWeight": 0.7,
+            "offBoard": -35.0,
+            "undrafted": 240.0,
+            "blindOrderWeight": 7.3,
+            "blindOffBoard": -35.5,
+        },
+        "openings": openings,
+        "sims": sims,
+        "seed": 1,
+    }
+    script = tmp_path / "room.js"
+    script.write_text(
+        _page_room_block()
+        + "\nconst x = JSON.parse(require('fs').readFileSync(0, 'utf8'));\n"
+        + "process.stdout.write(JSON.stringify(roomExpectedAfter("
+        + "x.pool, x.positions, x.seats, x.room, x.openings, x.sims, x.seed)));\n",
+        encoding="utf-8",
+    )
+    ran = subprocess.run(
+        ["node", str(script)], input=json.dumps(given), capture_output=True, text=True, check=True
+    )
+    page = json.loads(ran.stdout)
+
+    for position in ("LW", "D"):
+        assert page[position]["best_now"] == pytest.approx(python[position]["best_now"], abs=0.05)
+        assert page[position]["best_after"] == pytest.approx(
+            python[position]["best_after"], abs=1.0
+        )
+        assert page[position]["p_best_survives"] == pytest.approx(
+            python[position]["p_best_survives"], abs=0.03
+        )

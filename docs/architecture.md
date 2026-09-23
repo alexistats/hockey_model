@@ -307,3 +307,12 @@ The order comes from mock rooms, which run Yahoo's standard settings, not this
 league's. That is the known weakness. It is still the room's own behaviour
 rather than a board none of the other managers can see, and rebuilding it is one
 command once more mocks are saved.
+
+The draft page has no server behind it, so it carries the same simulation in
+JavaScript. That is a second implementation of the kind this project keeps
+having to undo, so the page keeps it between markers and `tests/test_room.py`
+runs that block under Node against the Python on the same room: same expected
+best-after, same survival odds, to within a few thousand simulated rooms' noise.
+When the rosters cannot be read - the page often cannot, because a pick of
+somebody off the board cannot be marked - both use coefficients fitted without
+the need term rather than switching the term off.

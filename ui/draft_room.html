@@ -391,6 +391,9 @@ footer b { color: var(--slate); font-weight: 600; }
         <input type="number" id="draftslot" min="1" step="1" value="8">
         <span id="slotline"></span>
       </label>
+      <label class="waitset" title="How many rounds this draft runs. Mocks often run fewer than the roster.">
+        <input type="number" id="draftrounds" min="1" max="30" step="1"> rounds
+      </label>
     </div>
     <div class="shape-body">
       <div><table class="grid" id="shapegrid"></table></div>
@@ -555,6 +558,9 @@ footer b { color: var(--slate); font-weight: 600; }
     // `order` is `gone` in pick sequence, which is the only way to see a run:
     // a set says six defencemen are off the board, not that they went in a row.
     order: [], roster: [], compare: [], shapeMode: "tier", slot: DATA.draftSlot || 1,
+    // Set from the rounds box when this draft runs fewer rounds than the roster
+    // holds, as the mocks do. Unset, the rules' draft_rounds, then the roster.
+    rounds: null,
   };
 
   /* ---------- where my turns fall ---------- */
@@ -674,13 +680,20 @@ footer b { color: var(--slate); font-weight: 600; }
   // Which round the next pick falls in, counting from 1.
   const currentRound = () => Math.floor(state.order.length / DATA.nTeams) + 1;
 
+  // How many rounds this draft runs. One copy, as in the API's draft_rounds,
+  // because the risk ramp and the deadline are both measured against it and
+  // used to count different drafts.
+  const draftRounds = () => state.rounds
+    || (DATA.rules && DATA.rules.draft_rounds)
+    || Object.values(DATA.rosterShape).reduce((s, n) => s + n, 0) + (DATA.bench || 0);
+
   // Weight on the optimistic end, ramped from the first round to the last.
   // The same function as the draft API's `risk_weight`, from the same rules.
   function riskWeight() {
     const r = DATA.rules || {};
     const start = r.risk_start ?? 0.2, end = r.risk_end ?? 0.8;
     if (r.rank_by === "vorp") return 0.5;
-    const rounds = Object.values(DATA.rosterShape).reduce((s, n) => s + n, 0) + (DATA.bench || 0);
+    const rounds = draftRounds();
     if (rounds <= 1) return end;
     const t = Math.min(1, Math.max(0, (currentRound() - 1) / (rounds - 1)));
     return start + t * (end - start);
@@ -872,13 +885,14 @@ footer b { color: var(--slate); font-weight: 600; }
   // showed up as a third left winger while centre looked empty, so a complete
   // roster looked lopsided and the needs panel asked for positions I had
   // covered. Same rule as the API's assign_roster, and as `fill_slots`, which is
-  // where the rule belongs.
-  function myLineup() {
+  // where the rule belongs. Any team's roster, because the room model asks what
+  // each of the other teams is still missing.
+  function lineupOf(roster) {
     const openings = {};
     for (const pos of SHAPE()) openings[pos] = DATA.rosterShape[pos];
     const assigned = new Map();
     const bench = [];
-    for (const i of [...state.roster].sort((a, b) => P[b].m - P[a].m)) {
+    for (const i of [...roster].sort((a, b) => P[b].m - P[a].m)) {
       const open = eligible(P[i]).filter((pos) => openings[pos] > 0);
       if (!open.length) { bench.push(i); continue; }
       const pick = open.reduce((a, b) => (openings[b] > openings[a] ? b : a));
@@ -892,6 +906,8 @@ footer b { color: var(--slate); font-weight: 600; }
     return { assigned, bench, filled, need };
   }
 
+  const myLineup = () => lineupOf(state.roster);
+
   function myNeeds() {
     const { filled, need } = myLineup();
     return { filled, need };
@@ -901,9 +917,7 @@ footer b { color: var(--slate); font-weight: 600; }
   // roster_pressure reports: value alone cannot see that the draft ends, and an
   // unfilled starting slot scores zero all season.
   function pressureOf(need) {
-    const rounds = state.rounds || (Object.values(DATA.rosterShape).reduce((a, b) => a + b, 0)
-                                    + (DATA.bench || 0));
-    const picksLeft = Math.max(0, rounds - state.roster.length);
+    const picksLeft = Math.max(0, draftRounds() - state.roster.length);
     const slotsOpen = SHAPE().reduce((n, pos) => n + need[pos], 0);
     const slack = picksLeft - slotsOpen;
     const base = (DATA.rules && DATA.rules.need_first_margin) || 25;
@@ -911,21 +925,151 @@ footer b { color: var(--slate); font-weight: 600; }
     return { picksLeft, slotsOpen, slack, margin };
   }
 
-  // What a position costs me if I pass on it now. The next `picks` picks are
-  // assumed to come off the top of the value board, which is the assumption the
-  // room mostly behaves like and the only one available without knowing the
-  // other managers. It is stated on the page for that reason.
-  function costOfWaiting(picks) {
-    const pool = P.filter((p) => !state.gone.has(p.i)).sort((a, b) => b.vorp - a.vorp);
-    const taken = new Set(pool.slice(0, picks).map((p) => p.i));
-    const best = (pos, skip) => {
-      const c = pool.find((p) => eligible(p).includes(pos) && !(skip && taken.has(p.i)));
-      return c ? c.vorp : null;
+  /* room:begin
+     The other managers' picks between now and my next turn, simulated. The same
+     room as the draft API's `hockey.serve.room.expected_after`: each pick is the
+     best of -w*ln(average pick), plus a bonus for filling an open slot of the
+     team picking, plus Gumbel noise - against a constant for somebody not on
+     this board. The page used to assume the room drafts straight down this
+     board, which it has never seen; measured on saved mocks that priced waiting
+     on forwards and goalies 25-50 points too high and read defence as free.
+
+     A second copy of the API's model, which this project has learned to
+     distrust, so tests/test_room.py runs this block under Node and holds it to
+     the Python on the same inputs. Keep it self-contained: nothing from the
+     page inside the markers. */
+  function roomExpectedAfter(pool, positions, seats, room, openings, sims, seed) {
+    let s = seed >>> 0;
+    const uniform = () => {
+      // mulberry32: seeded, so one board state always gives one answer.
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return (((t ^ (t >>> 14)) >>> 0) + 0.5) / 4294967296;
     };
+    const gumbel = () => -Math.log(-Math.log(uniform()));
+    const blind = openings == null;
+    const w = blind && room.blindOrderWeight != null ? room.blindOrderWeight : room.orderWeight;
+    const off = blind && room.blindOffBoard != null ? room.blindOffBoard : room.offBoard;
+    const n = pool.length, k = positions.length;
+    const base = pool.map((p) => -w * Math.log(p.adp == null ? room.undrafted : p.adp));
+    const elig = pool.map((p) => positions.map((pos) => p.elig.includes(pos)));
+    const ranked = positions.map((_, j) => pool.map((_, i) => i)
+      .filter((i) => elig[i][j]).sort((a, b) => pool[b].vorp - pool[a].vorp));
+    const sum = new Float64Array(k), some = new Int32Array(k), kept = new Int32Array(k);
+    const teams = [...new Set(seats)];
+    for (let m = 0; m < sims; m++) {
+      const avail = new Uint8Array(n).fill(1);
+      const left = blind ? null : Object.fromEntries(teams.map((t) =>
+        [t, positions.map((pos) => (openings[t] && openings[t][pos]) || 0)]));
+      for (const seat of seats) {
+        const open = left && left[seat];
+        let best = -1, top = -Infinity;
+        for (let i = 0; i < n; i++) {
+          if (!avail[i]) continue;
+          let u = base[i];
+          if (open) {
+            for (let j = 0; j < k; j++) if (elig[i][j] && open[j] > 0) { u += room.needWeight; break; }
+          }
+          u += gumbel();
+          if (u > top) { top = u; best = i; }
+        }
+        if (best < 0 || top <= off + gumbel()) continue;  // somebody off this board
+        avail[best] = 0;
+        if (open) {
+          // Into the open slot he fits with the most room, as the league fills.
+          let slot = -1;
+          for (let j = 0; j < k; j++) {
+            if (elig[best][j] && open[j] > 0 && (slot < 0 || open[j] > open[slot])) slot = j;
+          }
+          if (slot >= 0) open[slot]--;
+        }
+      }
+      for (let j = 0; j < k; j++) {
+        const order = ranked[j];
+        if (!order.length) continue;
+        if (avail[order[0]]) kept[j]++;
+        for (const i of order) if (avail[i]) { sum[j] += pool[i].vorp; some[j]++; break; }
+      }
+    }
     const out = {};
-    for (const pos of SHAPE()) {
-      const now = best(pos, false), then = best(pos, true);
-      out[pos] = { now, then, cost: now === null || then === null ? null : now - then };
+    positions.forEach((pos, j) => {
+      const order = ranked[j];
+      if (!order.length) { out[pos] = null; return; }
+      const now = pool[order[0]].vorp;
+      // Emptied in most simulated rooms: no "best left" to speak of.
+      const then = some[j] >= 0.5 * sims ? sum[j] / some[j] : null;
+      out[pos] = {
+        best_now: now,
+        best_after: then,
+        cost: then === null ? null : Math.max(0, now - then),
+        p_best_survives: kept[j] / sims,
+      };
+    });
+    return out;
+  }
+  /* room:end */
+
+  // The seat that makes overall pick `number`.
+  function seatOf(number) {
+    const n = DATA.nTeams;
+    const round = Math.floor((number - 1) / n) + 1;
+    const within = ((number - 1) % n) + 1;
+    return DATA.snake && round % 2 === 0 ? n + 1 - within : within;
+  }
+
+  // Who picks, in order, before my next turn - the same window picksUntilTurn
+  // counts.
+  function seatsBeforeMyTurn(picks) {
+    const current = state.order.length + 1;
+    const onClock = current === myPick(Math.floor((current - 1) / DATA.nTeams) + 1);
+    const start = current + (onClock ? 1 : 0);
+    return Array.from({ length: picks }, (_, k) => seatOf(start + k));
+  }
+
+  // Whether the marked order can be read as the draft's order. My own picks are
+  // the check: marked in sequence, every one lands on my seat. A pick nobody
+  // marked - somebody not on this board - shifts every number after it, and
+  // then each team's roster read from the order would be somebody else's.
+  function orderCheck() {
+    const numbered = state.roster.map((i) => state.order.indexOf(i) + 1).filter((k) => k > 0);
+    if (!numbered.length) return "unchecked";
+    return numbered.every((k) => seatOf(k) === state.slot) ? "consistent" : "inconsistent";
+  }
+
+  // Each team's open starting slots, from the players the marked order gives it.
+  function openingsBySeat(seats) {
+    const held = {};
+    state.order.forEach((i, k) => {
+      const seat = state.roster.includes(i) ? state.slot : seatOf(k + 1);
+      (held[seat] ||= []).push(i);
+    });
+    const out = {};
+    for (const seat of seats) out[seat] = lineupOf(held[seat] || []).need;
+    return out;
+  }
+
+  // What a position costs me if I pass on it now: the drop in the best player
+  // left there by my next turn, expected over simulated rooms. Without a room
+  // model on the page, null - no claim about the room rather than a wrong one.
+  function costOfWaiting(picks) {
+    const positions = SHAPE();
+    const out = {};
+    const none = { now: null, then: null, cost: null, p: null };
+    if (!DATA.room) {
+      for (const pos of positions) out[pos] = none;
+      return out;
+    }
+    const pool = P.filter((p) => !state.gone.has(p.i))
+      .map((p) => ({ vorp: p.vorp, elig: eligible(p), adp: p.o }));
+    const seats = seatsBeforeMyTurn(picks);
+    const openings = orderCheck() === "inconsistent" ? null : openingsBySeat(new Set(seats));
+    const sim = roomExpectedAfter(pool, positions, seats, DATA.room, openings,
+                                  DATA.room.sims, state.order.length + 1);
+    for (const pos of positions) {
+      const c = sim[pos];
+      out[pos] = c ? { now: c.best_now, then: c.best_after, cost: c.cost, p: c.p_best_survives } : none;
     }
     return out;
   }
@@ -1046,15 +1190,18 @@ footer b { color: var(--slate); font-weight: 600; }
       const who = (namesAt[pos] || []).map((n) => n.split(" ").slice(1).join(" ") || n).join(", ");
       const urgent = need[pos] > 0 && !(pos === "G" && gBlock) && c.cost !== null &&
         c.cost >= (DATA.urgent ?? 20);
-      // A cost of zero is a real answer, not a missing one: the player I would
-      // get at this position is the same now as in twenty-six picks. Rendering
-      // it as "+0" reads like a rounding artefact, so say nothing is lost.
+      // A cost that rounds to zero is a real answer, not a missing one: the room
+      // is not expected to take anyone better here before my next turn.
+      // Rendering it as "+0" reads like a rounding artefact, so say nothing is
+      // lost.
       const shown = c.cost === null ? "—" : Math.round(c.cost) <= 0 ? "0" : signed(-c.cost);
+      const odds = c.p === null ? "" : ` title="The best ${pos} now is still there at my next turn in ${
+        Math.round(c.p * 100)}% of simulated rooms"`;
       return `<li class="${need[pos] ? "" : "full"} ${urgent ? "urgent" : ""}">
         <span class="pos">${pos}</span>
         <span class="pips">${pips}</span>
         <span class="who">${who || "&mdash;"}</span>
-        <span class="cost"><b>${shown}</b>value if I wait</span>
+        <span class="cost"${odds}><b>${shown}</b>value if I wait</span>
       </li>`;
     }).join("")
       + (lineup.bench.length
@@ -1099,7 +1246,11 @@ footer b { color: var(--slate); font-weight: 600; }
       }
     }
     if (!open.length) {
-      el.innerHTML = (held.length
+      const unpriced = positions.some((p) => need[p] > 0 && !blocked(p));
+      el.innerHTML = (unpriced
+        ? `<b>Take the best score.</b> This page carries no room model, so it cannot say
+           what waiting on the open slots costs.`
+        : held.length
         ? `<b>Take the best score.</b> The open slots are blocked by a rule for now.`
         : `<b>Every starting slot is filled.</b> From here the bench is positionless,
            so take the best score left on the board.`) + topLine + heldNote;
@@ -1501,6 +1652,16 @@ footer b { color: var(--slate); font-weight: 600; }
     drawShape();
   });
 
+  // The rounds this draft runs. The risk ramp moves with it, so every score
+  // does, and the whole board redraws.
+  document.getElementById("draftrounds").addEventListener("input", (e) => {
+    const n = Number(e.target.value);
+    if (!Number.isFinite(n) || n < 1 || n > 30) return;
+    state.rounds = Math.round(n);
+    save();
+    render();
+  });
+
   document.getElementById("sortby").addEventListener("click", (e) => {
     const b = e.target.closest("button");
     if (!b) return;
@@ -1591,7 +1752,8 @@ footer b { color: var(--slate); font-weight: 600; }
   function save() {
     const payload = {
       gone: [...state.gone], mine: state.mine, order: state.order, roster: state.roster,
-      compare: state.compare, shapeMode: state.shapeMode, slot: state.slot, at: Date.now(),
+      compare: state.compare, shapeMode: state.shapeMode, slot: state.slot,
+      rounds: state.rounds, at: Date.now(),
     };
     try { localStorage.setItem("bluelinedraft", JSON.stringify(payload)); } catch {}
     if (!store) return;
@@ -1617,12 +1779,15 @@ footer b { color: var(--slate); font-weight: 600; }
     if (payload.shapeMode === "tier" || payload.shapeMode === "vorp") state.shapeMode = payload.shapeMode;
     state.compare = (payload.compare || []).filter((i) => P[i]).slice(0, MAX_COMPARE);
     if (Number.isFinite(payload.slot)) state.slot = payload.slot;
+    if (Number.isFinite(payload.rounds)) state.rounds = payload.rounds;
     document.getElementById("draftslot").value = state.slot;
+    document.getElementById("draftrounds").value = draftRounds();
     document.querySelectorAll("#shapemode button").forEach((x) =>
       x.setAttribute("aria-pressed", String(x.dataset.mode === state.shapeMode)));
   }
 
   try { adopt(JSON.parse(localStorage.getItem("bluelinedraft"))); } catch {}
+  document.getElementById("draftrounds").value = draftRounds();
 
   document.getElementById("footnote").innerHTML = DATA.footnote;
   document.getElementById("kicker").textContent = DATA.kicker;
