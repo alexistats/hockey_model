@@ -321,6 +321,33 @@ def test_the_last_two_picks_are_schedule_picks_and_the_ones_before_swing():
     assert kinds[2] == "schedule" and kinds[1] == "schedule"
 
 
+def test_a_shorter_draft_moves_the_plan_and_the_deadline_together():
+    """A 16-round mock with a 17-slot roster: the deadline counted 16, while the
+    plan counted 17 and put the first schedule pick a round late."""
+    from hockey.serve.recommend import DEFAULT_RULES, draft_plan, draft_rounds, roster_pressure
+
+    rules = {**DEFAULT_RULES, "draft_rounds": 16}
+    full = dict.fromkeys(["C", "LW", "RW", "D", "G"], 0)
+    assert draft_rounds(_Board(), DEFAULT_RULES) == 17  # unset: the roster
+    assert draft_rounds(_Board(), rules) == 16
+    for made in range(10, 16):
+        plan = draft_plan(_Board(), _state_with(made), rules, full)
+        pressure = roster_pressure(_Board(), _state_with(made), rules, full)
+        assert plan["picks_left"] == pressure["picks_left"] == 16 - made
+    kinds = {
+        16 - n: draft_plan(_Board(), _state_with(n), rules, full)["pick_kind"] for n in (11, 14, 15)
+    }
+    assert kinds == {5: "ceiling", 2: "schedule", 1: "schedule"}
+
+
+def test_the_risk_ramp_reaches_its_end_in_the_last_round_of_a_shorter_draft():
+    from hockey.serve.recommend import DEFAULT_RULES, draft_rounds, risk_weight
+
+    rounds = draft_rounds(_Board(), {**DEFAULT_RULES, "draft_rounds": 16})
+    assert risk_weight(16, rounds, 0.2, 0.8) == pytest.approx(0.8)
+    assert risk_weight(1, rounds, 0.2, 0.8) == pytest.approx(0.2)
+
+
 def _cand(pid, name, score, *, need=False, slot="C", starts=None, injury=None):
     from hockey.serve.recommend import Candidate
 

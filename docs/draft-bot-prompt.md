@@ -17,7 +17,7 @@ Base URL `http://127.0.0.1:8899`. Interactive docs at `/docs`.
 |---|---|---|
 | `GET /health` | once at start | `convergence` (r-hat). No convergence block, no draft. |
 | `POST /draft/reset` | before a mock | clears state |
-| `POST /draft/settings` | once, if the draft is not 17 rounds | `{"rules": {"draft_rounds": 16}}` — every deadline is measured against it |
+| `POST /draft/settings` | once, if the draft is not 17 rounds | `{"rules": {"draft_rounds": 16}}` — the deadline, the plan for the last picks and the risk ramp are all measured against it |
 | `POST /draft/observed` | every time the board changes | `{"names": [...everyone drafted, in draft order...], "mine": [...my players...]}` |
 | `GET /recommend` | my turn | `recommendation`, and everything behind it |
 | `GET /team/me` | my turn, for the log | `lineup`, `needs`, `bench` |

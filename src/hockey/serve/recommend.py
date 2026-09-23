@@ -140,6 +140,18 @@ def assign_roster(mine: pd.DataFrame, shape: dict[str, int], bench: int) -> dict
     }
 
 
+def draft_rounds(board, rules: dict) -> int:
+    """How many rounds this draft runs: `draft_rounds` when set, else the roster.
+
+    One copy, because three things are measured against it - the deadline, the
+    plan for the last picks and the risk ramp - and they used to disagree. In a
+    16-round mock with a 17-slot roster the deadline counted 16 while the plan
+    and the ramp counted 17, so the two schedule picks started a round late and
+    the ramp never reached its ambitious end.
+    """
+    return int(rules.get("draft_rounds") or (sum(board.roster_shape.values()) + board.bench))
+
+
 def risk_weight(current_round: int, n_rounds: int, start: float, end: float) -> float:
     """Weight on the optimistic quantile at this round, ramped linearly.
 
@@ -265,8 +277,7 @@ def roster_pressure(board, state, rules: dict, needs: dict[str, int]) -> dict:
     forwards on the bench: each individual override cleared the flat 25-point
     bar, and nothing was counting the picks left to fill them.
     """
-    n_rounds = rules.get("draft_rounds") or (sum(board.roster_shape.values()) + board.bench)
-    picks_left = max(0, int(n_rounds) - len(state.mine))
+    picks_left = max(0, draft_rounds(board, rules) - len(state.mine))
     slots_open = sum(needs.values())
     slack = picks_left - slots_open
     base = float(rules["need_first_margin"])
@@ -302,8 +313,7 @@ def draft_plan(board, state, rules: dict, needs: dict[str, int]) -> dict:
     already cover is worth nothing in week one - and the picks before them swing
     for the ceiling, where a bust costs a waiver claim and a hit wins a week.
     """
-    n_rounds = sum(board.roster_shape.values()) + board.bench
-    left = max(0, n_rounds - len(state.mine))
+    left = max(0, draft_rounds(board, rules) - len(state.mine))
     starters_open = sum(needs.values())
     if starters_open:
         return {
@@ -394,9 +404,11 @@ def shortlist(
     # baseline is noise and a small edge at that position is not a reason.
     free_below = {str(r.position): int(getattr(r, "free_below", 99)) for r in levels.itertuples()}
 
-    n_rounds = sum(board.roster_shape.values()) + board.bench
     weight = risk_weight(
-        state.current_round, n_rounds, float(rules["risk_start"]), float(rules["risk_end"])
+        state.current_round,
+        draft_rounds(board, rules),
+        float(rules["risk_start"]),
+        float(rules["risk_end"]),
     )
     valued = add_risk_score(valued, weight)
     key = "risk_score" if rules["rank_by"] == "risk" else "vorp"
