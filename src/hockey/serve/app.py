@@ -17,9 +17,11 @@ against the league as it currently stands.
 """
 
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from hockey.serve import board as board_mod
@@ -66,12 +68,22 @@ class Settings(BaseModel):
 
 
 def create_app(
-    directory: Path, goalies: Path | None = None, n_teams: int = 14, slot: int = 8
+    directory: Path,
+    goalies: Path | None = None,
+    n_teams: int = 14,
+    slot: int = 8,
+    ui: Path | None = None,
 ) -> FastAPI:
     data = board_mod.load(directory, goalies, n_teams=n_teams)
     resolver = Resolver(data.players)
     state = DraftState(slot=slot, n_teams=n_teams)
     rules: dict = dict(recommend_mod.DEFAULT_RULES)
+    names = dict(zip(data.players["player_id"].astype(int), data.players["player"], strict=True))
+    # What the last observation could not read. The bot gets it in the reply to
+    # its own post; the draft page, following along, gets it from
+    # /draft/state, so a name that did not resolve reaches the person who can
+    # mark it by hand instead of stopping at a log line.
+    last_seen: dict = {"unresolved": [], "at": None}
 
     app = FastAPI(title="hockey_models draft API", version="1.0")
     # Read-only handles for tools that replay a saved draft through the API and
@@ -142,6 +154,24 @@ def create_app(
             "picks_on_the_board": state.total_picks,
             "unidentified": state.unidentified,
             "mine": state.mine,
+            # Everyone drafted, in draft order, for the page to mark. A pick the
+            # observation numbered sits at its number; one it did not (a pick
+            # recorded through /draft/mine, or an unordered observation)
+            # follows, in the order this server saw it.
+            "picks": [
+                {
+                    "player_id": p.player_id,
+                    "player": names.get(p.player_id),
+                    "by_me": p.by_me,
+                    "number": p.number,
+                }
+                for p in sorted(
+                    state.picks,
+                    key=lambda p: (p.number is None, p.number or 0, p.overall or 0),
+                )
+            ],
+            "unresolved": last_seen["unresolved"],
+            "observed_at": last_seen["at"],
             # Whether the observed order matched my own picks' seats, which is
             # what lets the room model read each team's open slots.
             "order_check": dict(zip(("status", "detail"), state.order_check(), strict=True)),
@@ -180,6 +210,10 @@ def create_app(
         change = state.reconcile(
             ids, mine_ids, unidentified=unidentified, order=order if payload.names else None
         )
+        # Distinct, in the order the board shows them: `mine` usually repeats
+        # a name from `names`.
+        last_seen["unresolved"] = list(dict.fromkeys(str(m["raw"]) for m in misses + mine_misses))
+        last_seen["at"] = datetime.now(UTC).isoformat(timespec="seconds")
         if misses:
             # Never guessed, never silently dropped. An unresolved name means
             # the board holds someone this server cannot identify, and acting
@@ -228,7 +262,26 @@ def create_app(
     @app.post("/draft/reset")
     def reset():
         state.reset()
+        last_seen.update(unresolved=[], at=None)
         return draft_state()
+
+    # The draft page, from the same origin as the API. Opened from disk it
+    # cannot call this server - the browser refuses a file page's requests to
+    # localhost - so it is served here, and follows the draft by polling
+    # /draft/state.
+    @app.get("/ui")
+    def page():
+        if ui is None or not ui.exists():
+            raise HTTPException(
+                404,
+                f"no draft page at {ui}: build it with python scripts/build_draft_ui.py "
+                "<board> --goalies <goalies>, then restart with --ui <that file>",
+            )
+        return FileResponse(ui, media_type="text/html")
+
+    @app.get("/", include_in_schema=False)
+    def home():
+        return RedirectResponse("/ui")
 
     @app.get("/board")
     def get_board(limit: int = 50, position: str | None = None):

@@ -68,7 +68,8 @@ python -m hockey.export artifacts/board_v2    # replacement level, value, tiers
 python -m hockey.serve.room --mocks ../draft_bot/artifacts/mocks   # the room model
 python scripts/trace_cost_of_waiting.py <mock dir> --holdout      # check it on a mock
 python scripts/build_draft_ui.py artifacts/board_v2   # the single-file draft page
-python -m hockey.serve --board artifacts/board_v3 \n    --goalies artifacts/goalies_v2 --slot 8           # the draft-day API, port 8899
+python -m hockey.serve --board artifacts/board_v3 \n    --goalies artifacts/goalies_v2 --slot 8           # the draft-day API, port 8899;
+                                                     # the draft page at localhost:8899/ui
 
 pytest
 ruff check . && ruff format --check .

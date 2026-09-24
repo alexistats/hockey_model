@@ -2,6 +2,9 @@
 
     python -m hockey.serve --board artifacts/board_v3 --goalies artifacts/goalies_v2
 
+Then open http://localhost:8899/ui for the draft page, served from here so it
+can follow the draft the bot is watching.
+
 Binds to localhost only. Nothing here authenticates anything, because nothing
 here is meant to leave this machine.
 """
@@ -22,6 +25,11 @@ def main() -> None:
     parser.add_argument("--teams", type=int, default=14)
     parser.add_argument("--slot", type=int, default=8, help="my draft position, 1-based")
     parser.add_argument("--port", type=int, default=8899)
+    parser.add_argument(
+        "--ui",
+        default="artifacts/ui/draft_board.html",
+        help="the built draft page, served at /ui so it can follow the draft",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -30,6 +38,7 @@ def main() -> None:
         None if args.goalies is None else Path(args.goalies),
         n_teams=args.teams,
         slot=args.slot,
+        ui=Path(args.ui),
     )
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="info")
 

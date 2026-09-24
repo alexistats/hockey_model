@@ -455,6 +455,14 @@ def main() -> None:
                 else ""
             )
             + (
+                "<b>Follow draft</b> works when this page is opened from the draft server "
+                "(python -m hockey.serve, then localhost:8899/ui) while the bot watches the "
+                "draft: every two seconds it marks the picks the server has seen, ✕ for the "
+                "room and + for mine, and counts picks of players who are not on this board "
+                "toward the clock. A name the server could not match is listed above the "
+                "board; mark him by hand and the mark stays until the server names him. "
+            )
+            + (
                 "<b>Goalies</b> come from a separate model and a separate fit, so their "
                 "draws are independent of the skaters' - which is exactly what makes "
                 "comparing the two legitimate. They are valued against the goalie slots "
