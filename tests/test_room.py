@@ -10,8 +10,6 @@ has never seen. These pin both halves of that, and the pieces the fix rests on.
 
 import json
 import math
-import shutil
-import subprocess
 
 import numpy as np
 import pandas as pd
@@ -296,26 +294,16 @@ def test_the_expected_cost_is_never_negative(gap):
 # --- the page's copy ---------------------------------------------------------
 
 
-def _page_room_block() -> str:
-    """The room simulation the draft page carries, lifted from between its markers."""
-    from pathlib import Path
-
-    html = (Path(__file__).parent.parent / "ui" / "draft_room.html").read_text(encoding="utf-8")
-    start, end = html.index("/* room:begin"), html.index("/* room:end */")
-    return html[start:end]
-
-
-def test_the_page_room_is_self_contained():
+def test_the_page_room_is_self_contained(page_source):
     # The block is run on its own under Node, so it may not lean on the page.
-    block = _page_room_block()
+    block = page_source("room")
     assert "function roomExpectedAfter" in block
     for page_global in ("DATA", "state.", "P[", "document"):
         assert page_global not in block, page_global
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="needs Node to run the page's copy")
 @pytest.mark.parametrize("reads_needs", [True, False])
-def test_the_page_simulates_the_same_room_as_the_api(tmp_path, reads_needs):
+def test_the_page_simulates_the_same_room_as_the_api(page_js, reads_needs):
     """The page prices waiting with its own copy of the room, in JavaScript.
 
     A second implementation that quietly disagrees is exactly what this project
@@ -340,37 +328,29 @@ def test_the_page_simulates_the_same_room_as_the_api(tmp_path, reads_needs):
     sims = 4000
     python = expected_after(pool, ["LW", "D"], ROUND_ONE_GAP, room, openings, sims=sims, seed=1)
 
-    given = {
-        "pool": [
-            {"vorp": float(r.vorp), "elig": list(r.eligible), "adp": adp.get(int(r.player_id))}
-            for r in pool.itertuples()
-        ],
-        "positions": ["LW", "D"],
-        "seats": ROUND_ONE_GAP,
-        "room": {
-            "orderWeight": 7.5,
-            "needWeight": 0.7,
-            "offBoard": -35.0,
-            "undrafted": 240.0,
-            "blindOrderWeight": 7.3,
-            "blindOffBoard": -35.5,
+    page = page_js(
+        "room",
+        "roomExpectedAfter(x.pool, x.positions, x.seats, x.room, x.openings, x.sims, x.seed)",
+        {
+            "pool": [
+                {"vorp": float(r.vorp), "elig": list(r.eligible), "adp": adp.get(int(r.player_id))}
+                for r in pool.itertuples()
+            ],
+            "positions": ["LW", "D"],
+            "seats": ROUND_ONE_GAP,
+            "room": {
+                "orderWeight": 7.5,
+                "needWeight": 0.7,
+                "offBoard": -35.0,
+                "undrafted": 240.0,
+                "blindOrderWeight": 7.3,
+                "blindOffBoard": -35.5,
+            },
+            "openings": openings,
+            "sims": sims,
+            "seed": 1,
         },
-        "openings": openings,
-        "sims": sims,
-        "seed": 1,
-    }
-    script = tmp_path / "room.js"
-    script.write_text(
-        _page_room_block()
-        + "\nconst x = JSON.parse(require('fs').readFileSync(0, 'utf8'));\n"
-        + "process.stdout.write(JSON.stringify(roomExpectedAfter("
-        + "x.pool, x.positions, x.seats, x.room, x.openings, x.sims, x.seed)));\n",
-        encoding="utf-8",
     )
-    ran = subprocess.run(
-        ["node", str(script)], input=json.dumps(given), capture_output=True, text=True, check=True
-    )
-    page = json.loads(ran.stdout)
 
     for position in ("LW", "D"):
         assert page[position]["best_now"] == pytest.approx(python[position]["best_now"], abs=0.05)

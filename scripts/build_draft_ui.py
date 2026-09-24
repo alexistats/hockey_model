@@ -146,6 +146,29 @@ def main() -> None:
     if room is None:
         print(f"warning: no {room_file}; the page will show no cost of waiting")
 
+    # The season's schedule, so the page can say how many of a player's games he
+    # would actually start for me. Days are sent once and teams as indices into
+    # them: 2,688 team-games in a few kilobytes.
+    calendar = None
+    off_night_max = None
+    schedule_file = out / "schedule.csv"
+    if schedule_file.exists():
+        games = pd.read_csv(schedule_file)
+        days = sorted(games["date"].unique())
+        at = {d: k for k, d in enumerate(days)}
+        calendar = {
+            "days": days,
+            "teams": {
+                str(team): sorted(at[d] for d in group["date"])
+                for team, group in games.groupby("team")
+            },
+        }
+        # An off night has fewer than half the league's teams playing: with 32
+        # teams, fewer than 16, which is 7 games or fewer. The page can move it.
+        off_night_max = (len(calendar["teams"]) // 2 - 1) // 2
+    else:
+        print(f"warning: no {schedule_file}; the page will show no schedule fit")
+
     # Goalies reach this file already merged into value_board.csv by the export,
     # so they are ranked and tiered; what they still need is their draws. They
     # come from a separate fit and a separate file, and because the board is
@@ -289,6 +312,8 @@ def main() -> None:
         "rules": DEFAULT_RULES,
         "noClearCall": NO_CLEAR_CALL,
         "urgent": URGENT,
+        "calendar": calendar,
+        "offNightMax": off_night_max,
         "room": None
         if room is None
         else {
@@ -348,6 +373,26 @@ def main() -> None:
                 if room is not None
                 else "<b>Value if I wait</b> is not shown: this page was built without a room "
                 "model, and a room that drafts down this board was measured wrong. "
+            )
+            + (
+                "<b>Fits</b> counts the games a player would add to my lineup this season: "
+                "the nights his team plays and my lineup, as it stands, has room for him - an "
+                "open slot he fits, or one freed by moving a player of mine who is eligible "
+                "elsewhere. A better player on a full night only bumps one of mine, so that "
+                "night adds nothing; his quality is the other columns. With two centres on my "
+                "roster, a third one fits only their nights off. It moves as my roster fills, "
+                "which is when it matters: early on everyone fits every game. For a goalie it "
+                "counts his team's games, and he starts only some of them. "
+                f"<b>Off nights</b> are his team's games on nights with {off_night_max} games "
+                "or fewer, when fewer than "
+                "half the league's teams play and my lineup is likelier to have a slot open; "
+                "the box above the board moves the cutoff. <b>My roster</b> puts my players "
+                "in their slots, with the nights each one starts, and counts for each position "
+                "the nights its slots are filled. Every night's lineup is set the way a manager "
+                "sets it: as many slots filled as possible, the best players in them. "
+                if calendar is not None
+                else "This board was built without a schedule, so it cannot say how a player "
+                "fits my lineup. "
             )
             + (
                 "<b>Goalies</b> come from a separate model and a separate fit, so their "

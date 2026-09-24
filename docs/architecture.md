@@ -316,3 +316,33 @@ best-after, same survival odds, to within a few thousand simulated rooms' noise.
 When the rosters cannot be read - the page often cannot, because a pick of
 somebody off the board cannot be marked - both use coefficients fitted without
 the need term rather than switching the term off.
+
+## The draft page counts starts, not games, against my roster
+
+Late in a draft the board's value barely separates players, and what does is
+the schedule: a fourth centre whose team plays the nights my centres already
+cover adds nothing, and one who plays their nights off adds a start each time.
+So the page's board carries **Fits** - the games a player would *add* to my
+lineup this season - and **Off nights**, his team's games on nights when fewer
+than half the league plays (7 games or fewer, adjustable). The roster tab shows
+the nights each of my players starts, and for each position the slot-nights my
+lineup fills.
+
+Fits counts added games, not starts, and the difference was found in use: with
+two centres drafted, a third one better than both "fit" all 84 of his games,
+because best-first he starts every night - but on a night all three play he
+only bumps one of mine, and my lineup is no bigger. Fits now counts the nights
+my lineup has room for him (`schedule.added_games`), which is the number that
+says a third centre is a poor schedule pick; his quality is the other columns.
+
+Every night's lineup is set the way a manager sets it (`schedule.lineup`): as
+many slots filled as possible, the best players in them, moving a dual-eligible
+starter when that frees a slot. The league's roster rule, best first into the
+slot with the most room, can leave a slot empty for a night - a C/LW takes the
+wing and the pure winger behind him sits with centre open - and no manager does
+that. `marginal_starts` uses the same lineup, so the API and the page agree; the
+page's copy sits between markers and `tests/test_schedule.py` runs it under Node
+against the Python on random rosters, with the lineup itself held to a brute
+force. A goalie is counted on his team's games, which overstates him: he starts
+only some of them, and the page marks his number as approximate rather than
+invent a model of which nights those are.

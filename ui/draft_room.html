@@ -359,6 +359,41 @@ thead th.rangehead { padding-bottom: 2px; vertical-align: bottom; }
 
 footer { color: var(--faint); font-size: 11.5px; line-height: 1.6; max-width: 66ch; }
 footer b { color: var(--slate); font-weight: 600; }
+
+/* ---- over the board: the players left, or my roster ---- */
+.tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; padding: 0 12px; border-bottom: 1px solid var(--edge); }
+.tabs [role="tab"] {
+  font: inherit; font-size: 12.5px; font-weight: 600; color: var(--slate); background: none; border: 0;
+  border-bottom: 2px solid transparent; margin-bottom: -1px; padding: 10px 10px 8px; cursor: pointer;
+}
+.tabs [role="tab"]:hover { color: var(--ink); }
+.tabs [role="tab"][aria-selected="true"] { color: var(--ink); border-bottom-color: var(--line); }
+.tabs .tabn { font-family: var(--mono); font-size: 11px; font-weight: 500; color: var(--faint); margin-left: 5px; }
+.tabs .waitset { margin-left: auto; padding: 6px 0; }
+
+/* schedule fit: nights he would be in my lineup, of his team's games */
+.fit { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+.fit .of { color: var(--faint); font-weight: 400; font-size: 11px; }
+.fit.approx { color: var(--slate); font-weight: 500; }
+
+/* ---- my roster ---- */
+.roster-view { padding: 14px 16px 16px; }
+.roster-view[hidden], .scroller[hidden] { display: none; }
+.lineup-sum { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 10px; margin-bottom: 8px; }
+.lsum { border: 1px solid var(--edge); border-radius: 4px; padding: 8px 10px 7px; border-top: 3px solid var(--line); }
+.lsum .head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.lsum .pos { font-stretch: 62%; font-weight: 700; font-size: 17px; letter-spacing: .04em; }
+.lsum .big { font-family: var(--mono); font-size: 18px; font-weight: 600; }
+.lsum .sub { font-size: 10.5px; color: var(--faint); letter-spacing: .02em; }
+.lsum .bar { height: 5px; background: var(--well); border-radius: 3px; overflow: hidden; margin: 6px 0 4px; }
+.lsum .bar i { display: block; height: 100%; background: var(--line); }
+.rnote { font-size: 11.5px; color: var(--slate); margin: 0 0 12px; }
+.rnote b { font-family: var(--mono); color: var(--ink); font-weight: 600; }
+table.rtable thead th { position: static; cursor: default; }
+table.rtable td.slot { font-stretch: 62%; font-weight: 700; font-size: 15px; letter-spacing: .04em; text-align: left; width: 46px; }
+table.rtable tr.open td { color: var(--faint); font-style: italic; cursor: default; }
+table.rtable tr.open:hover { background: none; }
+table.rtable tr.bench td.slot { color: var(--faint); }
 </style>
 
 <div class="shell">
@@ -416,6 +451,8 @@ footer b { color: var(--slate); font-weight: 600; }
       <button data-sort="f" aria-pressed="false">Floor</button>
       <button data-sort="c" aria-pressed="false">Ceiling</button>
       <button data-sort="g" aria-pressed="false">Games</button>
+      <button data-sort="fit" aria-pressed="false" title="Games he would add to my lineup, against my roster as it stands">Fits</button>
+      <button data-sort="off" aria-pressed="false" title="His team's games on off nights">Off nights</button>
     </div>
     <button class="btn" id="hidegone" aria-pressed="false">Hide drafted</button>
     <span class="spacer"></span>
@@ -425,7 +462,14 @@ footer b { color: var(--slate); font-weight: 600; }
 
   <div class="work">
     <div class="board-wrap">
-      <div class="scroller">
+      <div class="tabs" role="tablist" aria-label="What the board shows">
+        <button role="tab" id="tab-board" data-view="board" aria-controls="boardview" aria-selected="true">Players</button>
+        <button role="tab" id="tab-roster" data-view="roster" aria-controls="rosterview" aria-selected="false">My roster<span class="tabn" id="tab-roster-n">0</span></button>
+        <label class="waitset" title="Nights when fewer than half the league's teams play. My lineup has more open slots on those nights, so a player whose team plays them fits more often.">Off night: ≤
+          <input type="number" id="offmax" min="1" max="16" step="1"> games</label>
+      </div>
+      <div class="roster-view" id="rosterview" role="tabpanel" aria-labelledby="tab-roster" hidden></div>
+      <div class="scroller" id="boardview" role="tabpanel" aria-labelledby="tab-board">
         <table>
           <thead>
             <tr>
@@ -441,6 +485,8 @@ footer b { color: var(--slate); font-weight: 600; }
               <th data-sort="vorp">Value</th>
               <th data-sort="rs" aria-sort="descending" title="Value blended from cautious to ambitious as the draft goes on">Score</th>
               <th data-sort="g">Games</th>
+              <th data-sort="fit" title="Games he would add to my lineup this season, of his team's games: nights my lineup, as it stands, has room for him">Fits</th>
+              <th data-sort="off" title="His team's games on off nights">Off nights</th>
               <th class="plain"></th>
             </tr>
           </thead>
@@ -561,6 +607,10 @@ footer b { color: var(--slate); font-weight: 600; }
     // Set from the rounds box when this draft runs fewer rounds than the roster
     // holds, as the mocks do. Unset, the rules' draft_rounds, then the roster.
     rounds: null,
+    // Which tab the board shows, and the most games a night can have and still
+    // count as an off night.
+    view: "board",
+    offMax: DATA.offNightMax || 7,
   };
 
   /* ---------- where my turns fall ---------- */
@@ -766,7 +816,11 @@ footer b { color: var(--slate); font-weight: 600; }
     let list = P.filter((p) => {
       // Filtering by a position asks who could fill it, so this is eligibility
       // rather than the single slot the player is currently valued at.
-      if (state.pos !== "ALL" && !eligible(p).includes(state.pos)) return false;
+      if (state.pos === "SK") {
+        if (eligible(p).includes("G")) return false;
+      } else if (state.pos !== "ALL" && !eligible(p).includes(state.pos)) {
+        return false;
+      }
       if (state.hideGone && state.gone.has(p.i)) return false;
       if (q && !p.n.toLowerCase().includes(q) && !p.t.toLowerCase().includes(q)) return false;
       return true;
@@ -803,6 +857,8 @@ footer b { color: var(--slate); font-weight: 600; }
         <td class="vorp ${p.vorp < 0 ? "neg" : ""}">${signed(p.vorp)}</td>
         <td class="vorp ${p.rs < 0 ? "neg" : ""}">${signed(p.rs)}</td>
         <td class="dim">${fmt0(p.g)}</td>
+        <td>${fitCell(p)}</td>
+        <td class="dim">${CAL ? p.off : "—"}</td>
         <td class="acts">
           <button class="mini ${cmp.has(p.i) ? "cmp-on" : ""}" data-act="cmp" title="Compare">⇄</button>
           <button class="mini ${mine.has(p.i) ? "on" : ""}" data-act="mine" title="Add to my list">★</button>
@@ -924,6 +980,120 @@ footer b { color: var(--slate); font-weight: 600; }
     const margin = slotsOpen === 0 ? base : slack <= 0 ? null : base * picksLeft / slack;
     return { picksLeft, slotsOpen, slack, margin };
   }
+
+  /* schedule:begin
+     Games, not points. A late pick is worth the nights he would put one more
+     game in my lineup: each night the lineup is set the way a manager sets it -
+     as many slots filled as possible, the best players in them - and a player
+     adds a game only on a night it has room for him, directly or by moving one
+     of mine who is eligible elsewhere. A better player on a full night just
+     bumps one of mine. The draft API's `lineup`, `added_games` and
+     `marginal_starts`, as a second copy, so tests/test_schedule.py runs this
+     block under Node and holds it to the Python. Keep it self-contained. */
+
+  // One night's lineup: best first, each starting if the slots can be moved
+  // around to take him without benching anyone already in.
+  function nightLineup(players, shape) {
+    const units = [];
+    for (const s of Object.keys(shape)) for (let k = 0; k < shape[s]; k++) units.push(s);
+    const holder = new Array(units.length).fill(-1);
+    const place = (i, seen) => {
+      for (let u = 0; u < units.length; u++) {
+        if (seen[u] || !players[i].elig.includes(units[u])) continue;
+        seen[u] = true;
+        if (holder[u] < 0 || place(holder[u], seen)) { holder[u] = i; return true; }
+      }
+      return false;
+    };
+    const order = players.map((_, i) => i).sort((a, b) => players[b].mean - players[a].mean);
+    for (const i of order) place(i, new Array(units.length).fill(false));
+    return { units, holder, players };
+  }
+
+  // Whether a night's lineup has room for one more player, moving starters if
+  // that frees a slot he fits. Changes nothing.
+  function roomFor(night, elig) {
+    const seen = new Array(night.units.length).fill(false);
+    const free = (e) => {
+      for (let u = 0; u < night.units.length; u++) {
+        if (seen[u] || !e.includes(night.units[u])) continue;
+        seen[u] = true;
+        if (night.holder[u] < 0 || free(night.players[night.holder[u]].elig)) return true;
+      }
+      return false;
+    };
+    return free(elig);
+  }
+
+  // Each night the roster's players are on the ice, and its lineup.
+  function seasonLineups(roster, calendar, shape) {
+    const on = new Map();
+    for (const r of roster) {
+      for (const d of calendar[r.team] || []) {
+        if (!on.has(d)) on.set(d, []);
+        on.get(d).push(r);
+      }
+    }
+    const nights = new Map();
+    for (const [d, players] of on) nights.set(d, nightLineup(players, shape));
+    return nights;
+  }
+
+  // added(who, first, last): his team's games in the window, and on how many
+  // he would put one more game in my lineup. A player on the roster is counted
+  // against the rest of it.
+  function addsCounter(roster, calendar, shape) {
+    const nights = seasonLineups(roster, calendar, shape);
+    const empty = nightLineup([], shape);
+    return (who, first, last) => {
+      const days = (calendar[who.team] || []).filter((d) => d >= first && d <= last);
+      let added = 0;
+      for (const d of days) {
+        let night = nights.get(d) || empty;
+        if (night.players.some((r) => r.id === who.id)) {
+          night = nightLineup(night.players.filter((r) => r.id !== who.id), shape);
+        }
+        if (roomFor(night, who.elig)) added++;
+      }
+      return { games: days.length, added };
+    };
+  }
+
+  // Nights each roster player is in the lineup, over the window.
+  function rosterStarts(roster, calendar, shape, first, last) {
+    const starts = {};
+    for (const r of roster) starts[r.id] = 0;
+    for (const [d, night] of seasonLineups(roster, calendar, shape)) {
+      if (d < first || d > last) continue;
+      for (const i of night.holder) if (i >= 0) starts[night.players[i].id]++;
+    }
+    return starts;
+  }
+
+  // Slot-nights my lineup fills in the window, by slot.
+  function lineupNights(roster, calendar, shape, first, last) {
+    const filled = {};
+    for (const s of Object.keys(shape)) filled[s] = 0;
+    for (const [d, night] of seasonLineups(roster, calendar, shape)) {
+      if (d < first || d > last) continue;
+      night.holder.forEach((i, u) => { if (i >= 0) filled[night.units[u]]++; });
+    }
+    return filled;
+  }
+
+  // Each team's games on off nights: nights with `maxGames` games or fewer.
+  function offNightGames(calendar, maxGames) {
+    const teams = new Map();
+    for (const days of Object.values(calendar)) {
+      for (const d of days) teams.set(d, (teams.get(d) || 0) + 1);
+    }
+    const out = {};
+    for (const [team, days] of Object.entries(calendar)) {
+      out[team] = days.filter((d) => teams.get(d) / 2 <= maxGames).length;
+    }
+    return out;
+  }
+  /* schedule:end */
 
   /* room:begin
      The other managers' picks between now and my next turn, simulated. The same
@@ -1072,6 +1242,125 @@ footer b { color: var(--slate); font-weight: 600; }
       out[pos] = c ? { now: c.best_now, then: c.best_after, cost: c.cost, p: c.p_best_survives } : none;
     }
     return out;
+  }
+
+  /* ---------- the schedule, against my roster ---------- */
+  // Days are indices into DATA.calendar.days; the whole season is the window.
+  const CAL = DATA.calendar ? DATA.calendar.teams : null;
+  const LAST_DAY = DATA.calendar ? DATA.calendar.days.length - 1 : -1;
+  const asEntry = (p) => ({ id: p.i, team: p.t, mean: p.m, elig: eligible(p) });
+
+  // What every player would add to my lineup, and what each of mine starts,
+  // against the roster as it stands. It only moves when the roster or the
+  // off-night cutoff does, so it is kept until one of them changes.
+  let fitKey = null;
+  function scheduleFit() {
+    const key = `${state.roster.join(",")}|${state.offMax}`;
+    if (key !== fitKey) {
+      fitKey = key;
+      if (!CAL) {
+        for (const p of P) { p.fitRaw = -1; p.fitGames = 0; p.off = -1; p.starts = null; }
+      } else {
+        const roster = state.roster.map((i) => asEntry(P[i]));
+        const adds = addsCounter(roster, CAL, DATA.rosterShape);
+        const starts = rosterStarts(roster, CAL, DATA.rosterShape, 0, LAST_DAY);
+        const off = offNightGames(CAL, state.offMax);
+        for (const p of P) {
+          const got = adds(asEntry(p), 0, LAST_DAY);
+          p.fitRaw = got.added;
+          p.fitGames = got.games;
+          p.off = off[p.t] ?? 0;
+          p.starts = starts[p.i] ?? null;
+        }
+      }
+    }
+    // A drafted player adds nothing to my lineup from the board - mine are
+    // already in it - so all of them sort to the bottom of Fits.
+    for (const p of P) p.fit = state.gone.has(p.i) ? -1 : p.fitRaw;
+  }
+
+  // Games he would add to my lineup, of his team's games.
+  function fitCell(p) {
+    if (!CAL || state.gone.has(p.i)) return `<span class="dim">—</span>`;
+    // A goalie is counted on his team's games, and he starts only some of them.
+    const title = isGoalie(p)
+      ? `His team plays ${p.fitGames}; my lineup has room for him on ${p.fitRaw} of those nights, but a goalie starts only about ${fmt0(p.g)} games`
+      : `${p.fitRaw} of his team's ${p.fitGames} games would add a game to my lineup - nights it has room for him. On the rest a better player only bumps one of mine`;
+    return `<span class="fit ${isGoalie(p) ? "approx" : ""}" title="${title}">${isGoalie(p) ? "~" : ""}${p.fitRaw}<span class="of">/${p.fitGames}</span></span>`;
+  }
+
+  // Nights one of my players starts, of his team's games.
+  function startsCell(p) {
+    if (!CAL || p.starts == null) return `<span class="dim">—</span>`;
+    const title = isGoalie(p)
+      ? `In my lineup on ${p.starts} of his team's ${p.fitGames} nights, but a goalie starts only about ${fmt0(p.g)} games`
+      : `In my lineup on ${p.starts} of his team's ${p.fitGames} games`;
+    return `<span class="fit ${isGoalie(p) ? "approx" : ""}" title="${title}">${isGoalie(p) ? "~" : ""}${p.starts}<span class="of">/${p.fitGames}</span></span>`;
+  }
+
+  function showView() {
+    const roster = state.view === "roster";
+    document.getElementById("boardview").hidden = roster;
+    document.getElementById("rosterview").hidden = !roster;
+    document.getElementById("tab-board").setAttribute("aria-selected", String(!roster));
+    document.getElementById("tab-roster").setAttribute("aria-selected", String(roster));
+  }
+
+  // My roster in its slots - starters by position, open slots named, then the
+  // bench - with each player's schedule, and how full each position's lineup
+  // runs over the season.
+  function drawRoster() {
+    document.getElementById("tab-roster-n").textContent = state.roster.length;
+    const el = document.getElementById("rosterview");
+    if (state.view !== "roster") return;
+    const lineup = myLineup();
+    const bySlot = {};
+    for (const [i, pos] of lineup.assigned) (bySlot[pos] ||= []).push(i);
+    const cells = (i) => {
+      const p = P[i];
+      return `<td class="left"><div class="pname">${p.n}</div>
+                <div class="psub">${eligible(p).join("/")} · ${p.t}</div></td>
+              <td class="dim">${CAL ? p.fitGames : "—"}</td>
+              <td class="dim">${CAL ? p.off : "—"}</td>
+              <td>${startsCell(p)}</td>
+              <td class="mval">${fmt0(p.m)}</td>
+              <td class="vorp ${p.vorp < 0 ? "neg" : ""}">${signed(p.vorp)}</td>`;
+    };
+    const rows = [];
+    for (const pos of SHAPE()) {
+      const held = (bySlot[pos] || []).sort((a, b) => P[b].m - P[a].m);
+      for (let k = 0; k < DATA.rosterShape[pos]; k++) {
+        rows.push(held[k] == null
+          ? `<tr class="open"><td class="slot">${pos}</td><td class="left" colspan="6">open</td></tr>`
+          : `<tr data-i="${held[k]}"><td class="slot">${pos}</td>${cells(held[k])}</tr>`);
+      }
+    }
+    for (const i of [...lineup.bench].sort((a, b) => P[b].m - P[a].m)) {
+      rows.push(`<tr class="bench" data-i="${i}"><td class="slot">BN</td>${cells(i)}</tr>`);
+    }
+
+    let summary = "";
+    if (CAL) {
+      const nights = LAST_DAY + 1;
+      const filled = lineupNights(state.roster.map((i) => asEntry(P[i])), CAL,
+                                  DATA.rosterShape, 0, LAST_DAY);
+      const total = Object.values(filled).reduce((a, b) => a + b, 0);
+      summary = `<p class="rnote"><b>${fmt0(total)}</b> games in my lineup this season, of
+          ${nights} nights. Each position: games its slots are filled, of every slot every night.</p>
+        <div class="lineup-sum">${SHAPE().map((pos) => {
+          const cap = DATA.rosterShape[pos] * nights;
+          return `<div class="lsum"><div class="head"><span class="pos">${pos}</span>
+              <span class="big">${fmt0(filled[pos])}</span></div>
+            <div class="bar"><i style="width:${(100 * filled[pos] / cap).toFixed(1)}%"></i></div>
+            <div class="sub">of ${fmt0(cap)} · ${DATA.rosterShape[pos]} slot${DATA.rosterShape[pos] === 1 ? "" : "s"}</div></div>`;
+        }).join("")}</div>`;
+    }
+    el.innerHTML = summary + `<table class="rtable">
+        <thead><tr><th class="left">Slot</th><th class="left">Player</th><th>Games</th>
+          <th>Off nights</th><th title="Nights he is in my lineup: every night set with as many slots filled as possible and the best players in them">Starts</th>
+          <th>Points</th><th>Value</th></tr></thead>
+        <tbody>${rows.join("")}</tbody></table>`
+      + (state.roster.length ? "" : `<p class="empty">No one yet. Mark my picks with + on the board.</p>`);
   }
 
   function bands() {
@@ -1566,12 +1855,15 @@ footer b { color: var(--slate); font-weight: 600; }
   function render() {
     recompute();
     retier();
+    scheduleFit();
     drawRows();
     drawStrip();
     drawShape();
     drawCompare();
     drawDetail();
     drawMyList();
+    drawRoster();
+    showView();
   }
 
   /* ---------- events ---------- */
@@ -1662,6 +1954,31 @@ footer b { color: var(--slate); font-weight: 600; }
     render();
   });
 
+  document.querySelector(".tabs").addEventListener("click", (e) => {
+    const tab = e.target.closest("[role='tab']");
+    if (!tab) return;
+    state.view = tab.dataset.view;
+    save();
+    drawRoster();
+    showView();
+  });
+
+  document.getElementById("offmax").addEventListener("input", (e) => {
+    const n = Number(e.target.value);
+    if (!Number.isFinite(n) || n < 1 || n > 16) return;
+    state.offMax = Math.round(n);
+    save();
+    render();
+  });
+
+  // A roster row opens the player in the rail, as a board row does.
+  document.getElementById("rosterview").addEventListener("click", (e) => {
+    const tr = e.target.closest("tr[data-i]");
+    if (!tr) return;
+    state.selected = Number(tr.dataset.i);
+    drawDetail();
+  });
+
   document.getElementById("sortby").addEventListener("click", (e) => {
     const b = e.target.closest("button");
     if (!b) return;
@@ -1713,8 +2030,11 @@ footer b { color: var(--slate); font-weight: 600; }
   }
 
   const pf = document.getElementById("posfilter");
-  pf.innerHTML = ["ALL", ...POSITIONS].map((p) =>
-    `<button data-pos="${p}" aria-pressed="${p === "ALL"}">${p === "ALL" ? "All" : p}</button>`).join("");
+  // "Skaters" is everyone but the goalies, for the stretch of a draft where no
+  // goalie is being considered and they only crowd the list.
+  const FILTER_LABELS = { ALL: "All", SK: "Skaters" };
+  pf.innerHTML = ["ALL", "SK", ...POSITIONS].map((p) =>
+    `<button data-pos="${p}" aria-pressed="${p === "ALL"}">${FILTER_LABELS[p] || p}</button>`).join("");
   pf.addEventListener("click", (e) => {
     const b = e.target.closest("button");
     if (!b) return;
@@ -1753,7 +2073,7 @@ footer b { color: var(--slate); font-weight: 600; }
     const payload = {
       gone: [...state.gone], mine: state.mine, order: state.order, roster: state.roster,
       compare: state.compare, shapeMode: state.shapeMode, slot: state.slot,
-      rounds: state.rounds, at: Date.now(),
+      rounds: state.rounds, view: state.view, offMax: state.offMax, at: Date.now(),
     };
     try { localStorage.setItem("bluelinedraft", JSON.stringify(payload)); } catch {}
     if (!store) return;
@@ -1780,6 +2100,8 @@ footer b { color: var(--slate); font-weight: 600; }
     state.compare = (payload.compare || []).filter((i) => P[i]).slice(0, MAX_COMPARE);
     if (Number.isFinite(payload.slot)) state.slot = payload.slot;
     if (Number.isFinite(payload.rounds)) state.rounds = payload.rounds;
+    if (payload.view === "board" || payload.view === "roster") state.view = payload.view;
+    if (Number.isFinite(payload.offMax)) state.offMax = payload.offMax;
     document.getElementById("draftslot").value = state.slot;
     document.getElementById("draftrounds").value = draftRounds();
     document.querySelectorAll("#shapemode button").forEach((x) =>
@@ -1788,6 +2110,7 @@ footer b { color: var(--slate); font-weight: 600; }
 
   try { adopt(JSON.parse(localStorage.getItem("bluelinedraft"))); } catch {}
   document.getElementById("draftrounds").value = draftRounds();
+  document.getElementById("offmax").value = state.offMax;
 
   document.getElementById("footnote").innerHTML = DATA.footnote;
   document.getElementById("kicker").textContent = DATA.kicker;

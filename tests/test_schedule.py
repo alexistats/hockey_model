@@ -9,6 +9,7 @@ exists.
 from datetime import date
 
 import pandas as pd
+import pytest
 
 from hockey.serve.schedule import marginal_starts, week_window
 
@@ -163,3 +164,229 @@ def test_the_season_window_answers_a_different_question_from_the_fortnight():
     assert (fortnight.games, fortnight.starts) == (2, 0)
     assert (season.games, season.starts) == (5, 3)
     assert season.as_dict(with_dates=False)["start_share"] == 0.6
+
+
+# --- a night's lineup, and the games a player adds ---------------------------
+
+
+def test_the_lineup_fills_the_slot_the_greedy_leaves_open():
+    """Best first into the slot with the most room puts the C/LW on the wing,
+    and the pure winger behind him has nowhere to go while centre sits open. A
+    manager moves the C/LW to centre and starts all three."""
+    from hockey.serve.schedule import _fill_night, lineup
+
+    tonight = [(1, 400.0, ("C", "LW")), (2, 300.0, ("LW",)), (3, 200.0, ("LW",))]
+    shape = {"C": 1, "LW": 2}
+    assert len(_fill_night(tonight, shape)) == 2  # the league's roster rule
+    assert lineup(tonight, shape) == {1: "C", 2: "LW", 3: "LW"}
+
+
+def test_the_lineup_is_as_full_as_possible_with_the_best_players_in_it():
+    """Held to a brute force over every set of players that could start
+    together: the most of them, and of those the best by mean."""
+    import itertools
+    import random
+
+    from hockey.serve.schedule import lineup
+
+    positions = ["C", "LW", "RW", "D"]
+    rng = random.Random(3)
+    for _ in range(300):
+        shape = {p: rng.randint(0, 2) for p in positions}
+        units = [p for p, n in shape.items() for _ in range(n)]
+        players = [
+            (k, float(m), tuple(rng.sample(positions, rng.randint(1, 2))))
+            for k, m in enumerate(rng.sample(range(100, 900), rng.randint(0, 7)))
+        ]
+
+        def fits(group, units=units, players=players):
+            return any(
+                all(units[u] in players[i][2] for i, u in zip(group, seats, strict=True))
+                for seats in itertools.permutations(range(len(units)), len(group))
+            )
+
+        groups = [
+            g
+            for r in range(len(players) + 1)
+            for g in itertools.combinations(range(len(players)), r)
+        ]
+        size = max(len(g) for g in groups if fits(g))
+        best = max(
+            (g for g in groups if len(g) == size and fits(g)),
+            key=lambda g: sorted((players[i][1] for i in g), reverse=True),
+        )
+        got = lineup(players, shape)
+        assert len(got) == size
+        assert set(got) == {players[i][0] for i in best}
+        assert all(got[pid] in dict((p[0], p[2]) for p in players)[pid] for pid in got)
+
+
+def test_a_third_centre_adds_only_the_nights_one_of_mine_is_off():
+    """The case that exposed the difference. With two centres on my roster a
+    third one better than both starts every night he plays - but on nights all
+    three play he only bumps one of mine. Those nights add nothing to my lineup,
+    and a player who adds more games is the better schedule pick."""
+    from hockey.serve.schedule import added_games
+
+    mine = roster(
+        player(1, "my first C", "BOS", ("C",), 500.0),
+        player(2, "my second C", "NYR", ("C",), 480.0),
+    )
+    calendar = {"BOS": [MON, TUE, WED], "NYR": [MON, TUE, THU], "UTA": [MON, TUE, WED, THU]}
+    better = pd.Series(player(3, "better than both", "UTA", ("C",), 900.0))
+    assert marginal_starts(better, mine, calendar, SHAPE, WINDOW).starts == 4
+    got = added_games(better, mine, calendar, SHAPE, WINDOW)
+    assert (got.games, got.added) == (4, 2)  # Wednesday and Thursday, when one of mine sits
+    assert got.dates == [WED.isoformat(), THU.isoformat()]
+
+
+def test_a_player_adds_a_game_by_freeing_a_slot_for_someone_else():
+    # Centre is held by my C/LW, and left wing is open. A pure centre still adds
+    # a game: my C/LW moves to the wing and he takes centre.
+    from hockey.serve.schedule import added_games
+
+    mine = roster(player(1, "my C/LW", "BOS", ("C", "LW"), 500.0))
+    calendar = {"BOS": [MON], "UTA": [MON]}
+    centre = pd.Series(player(2, "pure centre", "UTA", ("C",), 300.0))
+    assert added_games(centre, mine, calendar, {"C": 1, "LW": 1}, (MON, MON)).added == 1
+    assert added_games(centre, mine, calendar, {"C": 1}, (MON, MON)).added == 0
+
+
+# --- the page's copy ---------------------------------------------------------
+#
+# The draft page counts games added and starts itself, live as my roster fills,
+# because it has no server behind it. That is a second copy of `lineup`,
+# `added_games` and `marginal_starts`, so it is held to them here, under Node,
+# on random rosters.
+
+
+def _random_league(seed: int):
+    """A random calendar, roster and field of candidates, with no tied means."""
+    import random
+
+    rng = random.Random(seed)
+    teams = [f"T{k}" for k in range(8)]
+    days = [date(2026, 10, 1 + k) for k in range(28)]
+    calendar = {t: sorted(rng.sample(days, rng.randint(6, 18))) for t in teams}
+    positions = ["C", "LW", "RW", "D", "G"]
+    means = rng.sample(range(100, 700), 60)
+    players = [
+        player(k, f"p{k}", rng.choice(teams), tuple(rng.sample(positions, rng.randint(1, 2))), m)
+        for k, m in enumerate(means)
+    ]
+    size = rng.randint(0, 17)
+    return calendar, players[:size], players[size : size + 25], days
+
+
+def _as_page(calendar, rows):
+    iso = {t: [d.isoformat() for d in ds] for t, ds in calendar.items()}
+    entries = [
+        {"id": r["player_id"], "team": r["team"], "mean": r["mean"], "elig": list(r["eligible"])}
+        for r in rows
+    ]
+    return iso, entries
+
+
+def _frame(rows):
+    return pd.DataFrame(rows, columns=list(player(0, "", "", ("C",), 0.0)))
+
+
+def test_the_page_schedule_block_is_self_contained(page_source):
+    block = page_source("schedule")
+    assert "function addsCounter" in block
+    for page_global in ("DATA", "state.", "P[", "document"):
+        assert page_global not in block, page_global
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_the_page_counts_games_added_as_the_api_does(page_js, seed):
+    from hockey.serve.schedule import added_games
+
+    calendar, mine, field, days = _random_league(seed)
+    window = (days[3], days[-4])
+    iso, roster = _as_page(calendar, mine)
+    _, candidates = _as_page(calendar, field)
+    got = page_js(
+        "schedule",
+        "x.who.map((w) => addsCounter(x.roster, x.calendar, x.shape)(w, x.first, x.last))",
+        {
+            "roster": roster,
+            "calendar": iso,
+            "shape": SHAPE,
+            "who": candidates + roster,
+            "first": window[0].isoformat(),
+            "last": window[1].isoformat(),
+        },
+    )
+    frame = _frame(mine)
+    for row, page in zip(field + mine, got, strict=True):
+        want = added_games(pd.Series(row), frame, calendar, SHAPE, window)
+        assert (page["games"], page["added"]) == (want.games, want.added), row["player"]
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_the_page_counts_my_players_starts_as_the_api_does(page_js, seed):
+    calendar, mine, _, days = _random_league(seed)
+    window = (days[2], days[-3])
+    iso, roster = _as_page(calendar, mine)
+    got = page_js(
+        "schedule",
+        "rosterStarts(x.roster, x.calendar, x.shape, x.first, x.last)",
+        {
+            "roster": roster,
+            "calendar": iso,
+            "shape": SHAPE,
+            "first": window[0].isoformat(),
+            "last": window[1].isoformat(),
+        },
+    )
+    frame = _frame(mine)
+    for row in mine:
+        rest = frame[frame["player_id"] != row["player_id"]]
+        want = marginal_starts(pd.Series(row), rest, calendar, SHAPE, window)
+        assert got[str(row["player_id"])] == want.starts, row["player"]
+
+
+def test_the_page_counts_off_nights_as_nights_with_few_games(page_js):
+    # Monday: one game. Tuesday: two. Wednesday: three.
+    calendar = {
+        "A": ["mon", "tue", "wed"],
+        "B": ["mon", "wed"],
+        "C": ["tue", "wed"],
+        "D": ["tue", "wed"],
+        "E": ["wed"],
+        "F": ["wed"],
+    }
+    one = page_js("schedule", "offNightGames(x.calendar, 1)", {"calendar": calendar})
+    two = page_js("schedule", "offNightGames(x.calendar, 2)", {"calendar": calendar})
+    assert one == {"A": 1, "B": 1, "C": 0, "D": 0, "E": 0, "F": 0}
+    assert two == {"A": 2, "B": 1, "C": 1, "D": 1, "E": 0, "F": 0}
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_the_page_fills_my_lineup_night_by_night_as_the_api_would(page_js, seed):
+    from hockey.serve.schedule import lineup
+
+    calendar, mine, _, days = _random_league(seed)
+    iso, roster = _as_page(calendar, mine)
+    got = page_js(
+        "schedule",
+        "lineupNights(x.roster, x.calendar, x.shape, x.first, x.last)",
+        {
+            "roster": roster,
+            "calendar": iso,
+            "shape": SHAPE,
+            "first": days[0].isoformat(),
+            "last": days[-1].isoformat(),
+        },
+    )
+    want = dict.fromkeys(SHAPE, 0)
+    for day in days:
+        tonight = [
+            (r["player_id"], r["mean"], tuple(r["eligible"]))
+            for r in mine
+            if day in calendar[r["team"]]
+        ]
+        for slot in lineup(tonight, SHAPE).values():
+            want[slot] += 1
+    assert got == want
