@@ -387,3 +387,29 @@ players at each position, and players still at the top in their thirties are
 the ones who did not decline, so it came out anywhere from 0.10 to 0.78 across
 the three folds. Held at 1 it overcorrects at 33 and over, where the current
 model's error (0.18 over) and the fixed one's (0.15 under) straddle the truth.
+
+## The page can follow the draft instead of being clicked
+
+On draft day the bot watches Yahoo's draft tab (`draftbot mock --dry-run` reads
+every pick and never clicks) and posts what it sees to `/draft/observed`. The
+page used to be a second, hand-kept copy of the same draft: every pick marked
+with ✕ or +, while the next pick needed thinking about.
+
+Served by the draft API at `/ui`, the page shares the API's origin, which is
+the whole trick: opened from disk it cannot call localhost at all. **Follow
+draft** then polls `/draft/state` every two seconds, which now lists every pick
+in draft order with its number and whether it was mine, and the names the last
+observation could not match. The server wins wherever it has an answer. A name
+it could not match is listed above the board; marked by hand, the mark stays
+until the server names him, and never gets a draft number, so no team's roster
+is guessed from it.
+
+It also fixes the page's clock. The page counted the players marked on it, so
+every pick of somebody off the board - and a 14-team draft takes plenty - left
+it a pick behind, and "picks until my turn" and the room simulation's seats
+with it. It now counts `picks_on_the_board`, the server's total, and seats each
+pick by the number the server gave it.
+
+The page's copy of the marking logic sits between markers, and
+`tests/test_follow.py` runs it under Node; the same file holds the server to
+the pick list it hands out.

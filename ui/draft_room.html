@@ -241,6 +241,13 @@ input[type="search"] { min-width: 210px; }
   padding: 1px 4px; text-align: right;
 }
 .spacer { flex: 1 1 auto; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.followstate { font-size: 11px; color: var(--faint); letter-spacing: .02em; }
+.followbanner {
+  margin: 8px 0 0; padding: 8px 12px; border-radius: 6px; font-size: 12px; line-height: 1.45;
+  background: var(--red-wash); color: var(--ink); border: 1px solid var(--red);
+}
+.followbanner b { color: var(--red); }
 
 /* ---- main grid ---- */
 .work { display: grid; grid-template-columns: minmax(0, 1fr) 350px; gap: 18px; align-items: start; }
@@ -466,10 +473,14 @@ table.rtable tr.bench td.slot { color: var(--faint); }
       <button data-sort="off" aria-pressed="false" title="His team's games on off nights">Off nights</button>
     </div>
     <button class="btn" id="hidegone" aria-pressed="false">Hide drafted</button>
+    <button class="btn" id="follow" aria-pressed="false"
+            title="Mark picks from the draft server as the bot sees them, every two seconds">Follow draft</button>
+    <span class="followstate" id="followstate"></span>
     <span class="spacer"></span>
     <button class="btn" id="export">Export my list</button>
     <button class="btn" id="reset">Clear draft</button>
   </div>
+  <div class="followbanner" id="followbanner" hidden></div>
 
   <div class="work">
     <div class="board-wrap">
@@ -633,7 +644,15 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     // count as an off night.
     view: "board",
     offMax: DATA.offNightMax || 7,
+    // Picks the draft has made that this board cannot show - players outside
+    // the modelled pool, names nobody matched - which move the clock all the
+    // same, and each marked pick's number in the draft.
+    offBoard: 0, numbers: {},
   };
+
+  // Following the draft server instead of being clicked. `extra` holds rows
+  // marked by hand while following, for picks the server could not name.
+  const follow = { on: false, timer: null, extra: [], extraMine: [], sig: "", last: null };
 
   // The sorts the bar and the table header offer.
   const SORTS = new Set(["vorp", "m", "pq", "fit", "off", "a"]);
@@ -653,7 +672,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
   // from my next one. When it is my turn that is the gap between this pick and
   // my following pick; when it is not, it is what is left before my turn comes.
   function picksUntilTurn() {
-    const made = state.order.length;
+    const made = picksMade();
     const current = made + 1;
     const rounds = Math.ceil((P.length + DATA.nTeams) / DATA.nTeams);
     const mine = [];
@@ -664,18 +683,77 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     return ahead[0] - current;
   }
 
+  // Every pick made so far, marked or not: the draft clock.
+  function picksMade() {
+    return state.order.length + (state.offBoard || 0);
+  }
+
+  // A pick's number in the draft: the server's when the page follows it, the
+  // clock's when it was marked by hand, or - on a board saved before numbers
+  // were kept - its place in the marked order. A hand mark made while
+  // following has none, and is left out of every team's roster rather than
+  // guessed into one.
+  function numberOf(i) {
+    if (state.numbers && i in state.numbers) return state.numbers[i];
+    if (follow.on) return null;
+    const k = state.order.indexOf(i);
+    return k < 0 ? null : k + 1;
+  }
+
   // Marking someone drafted is one gesture with two meanings - by anyone, or by
   // me - and they have to stay consistent, so both go through here.
   function setGone(i, on, byMe) {
     if (on) {
-      if (!state.gone.has(i)) { state.gone.add(i); state.order.push(i); }
+      if (!state.gone.has(i)) {
+        state.numbers[i] = picksMade() + 1;
+        state.gone.add(i);
+        state.order.push(i);
+      }
       if (byMe && !state.roster.includes(i)) state.roster.push(i);
     } else {
       state.gone.delete(i);
       state.order = state.order.filter((x) => x !== i);
       state.roster = state.roster.filter((x) => x !== i);
+      delete state.numbers[i];
     }
   }
+
+  /* follow:begin - the draft server's picks as this page marks them. Pure, so a
+     test can run it under Node and hold it to the server's reply. */
+  // `server` is the reply from /draft/state; `rowOf` maps a player id to a row
+  // of this board; `extra` and `extraMine` are rows marked by hand while
+  // following. The server wins wherever it has an answer: a hand mark for a
+  // player it has since named is dropped for its own copy, at its own number.
+  function followBoard(server, rowOf, extra, extraMine) {
+    const order = [];
+    const roster = [];
+    const numbers = {};
+    const unknown = [];
+    const fromServer = [];
+    const seen = new Set();
+    for (const pick of server.picks || []) {
+      const i = rowOf[pick.player_id];
+      if (i === undefined) { unknown.push(pick.player_id); continue; }
+      if (seen.has(i)) continue;
+      seen.add(i);
+      fromServer.push(i);
+      order.push(i);
+      if (pick.by_me) roster.push(i);
+      if (pick.number != null) numbers[i] = pick.number;
+    }
+    for (const i of extra) {
+      if (seen.has(i)) continue;
+      seen.add(i);
+      order.push(i);
+      if (extraMine.includes(i)) roster.push(i);
+    }
+    // Picks the server counted that no row shows: players outside the board,
+    // and names nobody matched, less the ones marked here by hand.
+    const total = server.picks_on_the_board ?? order.length;
+    const offBoard = Math.max(0, total - order.length);
+    return { order, roster, numbers, offBoard, unknown, fromServer };
+  }
+  /* follow:end */
 
   const fmt0 = (x) => Math.round(x).toLocaleString();
   const fmt1 = (x) => x.toFixed(1);
@@ -745,7 +823,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
   }
 
   // Which round the next pick falls in, counting from 1.
-  const currentRound = () => Math.floor(state.order.length / DATA.nTeams) + 1;
+  const currentRound = () => Math.floor(picksMade() / DATA.nTeams) + 1;
 
   // How many rounds this draft runs, which the deadline is counted against:
   // the rounds box, then the rules' draft_rounds, then the roster.
@@ -1196,7 +1274,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
   // Who picks, in order, before my next turn - the same window picksUntilTurn
   // counts.
   function seatsBeforeMyTurn(picks) {
-    const current = state.order.length + 1;
+    const current = picksMade() + 1;
     const onClock = current === myPick(Math.floor((current - 1) / DATA.nTeams) + 1);
     const start = current + (onClock ? 1 : 0);
     return Array.from({ length: picks }, (_, k) => seatOf(start + k));
@@ -1207,7 +1285,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
   // marked - somebody not on this board - shifts every number after it, and
   // then each team's roster read from the order would be somebody else's.
   function orderCheck() {
-    const numbered = state.roster.map((i) => state.order.indexOf(i) + 1).filter((k) => k > 0);
+    const numbered = state.roster.map(numberOf).filter((k) => k != null && k > 0);
     if (!numbered.length) return "unchecked";
     return numbered.every((k) => seatOf(k) === state.slot) ? "consistent" : "inconsistent";
   }
@@ -1215,9 +1293,10 @@ table.rtable tr.bench td.slot { color: var(--faint); }
   // Each team's open starting slots, from the players the marked order gives it.
   function openingsBySeat(seats) {
     const held = {};
-    state.order.forEach((i, k) => {
-      const seat = state.roster.includes(i) ? state.slot : seatOf(k + 1);
-      (held[seat] ||= []).push(i);
+    state.order.forEach((i) => {
+      const k = numberOf(i);
+      const seat = state.roster.includes(i) ? state.slot : k == null ? null : seatOf(k);
+      if (seat != null) (held[seat] ||= []).push(i);
     });
     const out = {};
     for (const seat of seats) out[seat] = lineupOf(held[seat] || []).need;
@@ -1240,7 +1319,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     const seats = seatsBeforeMyTurn(picks);
     const openings = orderCheck() === "inconsistent" ? null : openingsBySeat(new Set(seats));
     const sim = roomExpectedAfter(pool, positions, seats, DATA.room, openings,
-                                  DATA.room.sims, state.order.length + 1);
+                                  DATA.room.sims, picksMade() + 1);
     for (const pos of positions) {
       const c = sim[pos];
       out[pos] = c ? { now: c.best_now, then: c.best_after, cost: c.cost, p: c.p_best_survives } : none;
@@ -1425,7 +1504,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     const cost = costOfWaiting(wait);
     const gBlock = goalieBlock();
 
-    const made = state.order.length;
+    const made = picksMade();
     const mine = made + 1 === myPick(Math.floor(made / DATA.nTeams) + 1);
     document.getElementById("slotline").textContent =
       `of ${DATA.nTeams}${DATA.snake ? ", snake" : ""} · ` +
@@ -1896,7 +1975,9 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     if (!tr) return;
     const i = Number(tr.dataset.i);
     const act = e.target.dataset.act;
-    if (act === "gone") {
+    if ((act === "gone" || act === "took") && follow.on) {
+      markByHand(i, act === "took");
+    } else if (act === "gone") {
       setGone(i, !state.gone.has(i), false);
       save();
     } else if (act === "took") {
@@ -2066,9 +2147,149 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     state.gone.clear();
     state.order = [];
     state.roster = [];
+    state.offBoard = 0;
+    state.numbers = {};
+    follow.extra = [];
+    follow.extraMine = [];
+    follow.sig = "";
     save();
     render();
   });
+
+  /* ---------- following the draft server ---------- */
+  // Opened from the draft API (python -m hockey.serve, then /ui), the page can
+  // follow the draft the bot is watching instead of being clicked: every two
+  // seconds it reads /draft/state and marks what the server has seen, ✕ for
+  // the room and + for mine. Opened from disk it cannot reach the server - the
+  // browser refuses a file page's requests to localhost - and the toggle says so.
+  const ROW_OF = Object.fromEntries(P.map((p) => [p.id, p.i]));
+  const CAN_FOLLOW = location.protocol === "http:" || location.protocol === "https:";
+  const FOLLOW_EVERY_MS = 2000;
+
+  async function pollDraft() {
+    if (!follow.on) return;
+    try {
+      const res = await fetch("/draft/state", { cache: "no-store" });
+      if (!res.ok) throw new Error(`it answered ${res.status}`);
+      const server = await res.json();
+      if (follow.on) applyServer(server);
+    } catch (err) {
+      showFollow(null, `The draft server is not answering (${err.message}). The board holds
+        what it had and keeps trying; turn Follow draft off to mark picks by hand.`);
+    }
+  }
+
+  function applyServer(server) {
+    follow.last = server;
+    const got = followBoard(server, ROW_OF, follow.extra, follow.extraMine);
+    // A hand mark the server has since named is the server's now.
+    const named = new Set(got.fromServer);
+    follow.extra = follow.extra.filter((i) => !named.has(i));
+    follow.extraMine = follow.extraMine.filter((i) => !named.has(i));
+    if (Number.isFinite(server.slot) && server.slot !== state.slot) {
+      state.slot = server.slot;
+      document.getElementById("draftslot").value = state.slot;
+    }
+    const sig = JSON.stringify([got.order, got.roster, got.offBoard, got.numbers, state.slot]);
+    if (sig !== follow.sig) {
+      follow.sig = sig;
+      state.order = got.order;
+      state.gone = new Set(got.order);
+      state.roster = got.roster;
+      state.offBoard = got.offBoard;
+      state.numbers = got.numbers;
+      save();
+      render();
+    }
+    showFollow(server, null, got);
+  }
+
+  function showFollow(server, problem, got) {
+    const line = document.getElementById("followstate");
+    const banner = document.getElementById("followbanner");
+    if (!follow.on) {
+      line.textContent = "";
+      banner.hidden = true;
+      return;
+    }
+    const notes = [];
+    if (problem) notes.push(problem);
+    if (server) {
+      line.textContent = `Following · pick ${picksMade() + 1} · round ${currentRound()}`;
+      const unresolved = server.unresolved || [];
+      if (unresolved.length) {
+        notes.push(`<b>The bot saw ${unresolved.length} name${unresolved.length > 1 ? "s" : ""} it could
+          not match:</b> ${unresolved.map(escapeHtml).join(", ")}. If one is on this board, mark him with
+          ✕ or +, and the mark stays until the server names him. The rest are players outside the board;
+          they already count toward the clock.`);
+      }
+      if (got && got.unknown.length) {
+        notes.push(`<b>${got.unknown.length} pick${got.unknown.length > 1 ? "s" : ""} the server knows
+          ${got.unknown.length > 1 ? "are" : "is"} not on this page's board</b> (ids ${got.unknown.slice(0, 4).join(", ")}):
+          the page was built from a different board than the server loaded. They count toward the clock.`);
+      }
+      if (server.order_check && server.order_check.status === "inconsistent") {
+        notes.push(`<b>The pick order does not line up with my seat</b> (${escapeHtml(server.order_check.detail)}),
+          so value if I wait is priced without reading the other teams' rosters.`);
+      }
+    }
+    banner.innerHTML = notes.join("<br>");
+    banner.hidden = notes.length === 0;
+  }
+
+  const escapeHtml = (s) => String(s).replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+  // While following, the server decides who is drafted. A hand mark is for a
+  // pick it could not name, kept until it names him; a player the server has
+  // drafted cannot be undrafted here.
+  function markByHand(i, mine) {
+    const byHand = follow.extra.includes(i);
+    if (state.gone.has(i) && !byHand) {
+      note(`The draft server has ${P[i].n} drafted; turn Follow draft off to change that by hand`);
+      return;
+    }
+    if (byHand && mine === follow.extraMine.includes(i)) {
+      follow.extra = follow.extra.filter((x) => x !== i);
+      follow.extraMine = follow.extraMine.filter((x) => x !== i);
+    } else {
+      if (!byHand) follow.extra.push(i);
+      follow.extraMine = follow.extraMine.filter((x) => x !== i);
+      if (mine) follow.extraMine.push(i);
+    }
+    follow.sig = "";
+    if (follow.last) applyServer(follow.last);
+    save();
+  }
+
+  function setFollow(on) {
+    follow.on = Boolean(on) && CAN_FOLLOW;
+    const b = document.getElementById("follow");
+    b.setAttribute("aria-pressed", String(follow.on));
+    b.classList.toggle("on", follow.on);
+    clearInterval(follow.timer);
+    follow.timer = null;
+    follow.sig = "";
+    if (follow.on) {
+      pollDraft();
+      follow.timer = setInterval(pollDraft, FOLLOW_EVERY_MS);
+    } else {
+      // What the server marked stays marked; from here the board is clicked.
+      follow.extra = [];
+      follow.extraMine = [];
+      showFollow(null, null);
+      render();
+    }
+    save();
+  }
+
+  if (!CAN_FOLLOW) {
+    const b = document.getElementById("follow");
+    b.disabled = true;
+    b.title = "Open this page from the draft server to follow the draft: python -m hockey.serve, " +
+      "then http://localhost:8899/ui";
+  }
+  document.getElementById("follow").addEventListener("click", () => setFollow(!follow.on));
 
   function syncFilters() {
     document.querySelectorAll("#posfilter button").forEach((b) =>
@@ -2122,7 +2343,10 @@ table.rtable tr.bench td.slot { color: var(--faint); }
       gone: [...state.gone], mine: state.mine, order: state.order, roster: state.roster,
       compare: state.compare, shapeMode: state.shapeMode, slot: state.slot,
       rounds: state.rounds, view: state.view, offMax: state.offMax,
-      sort: state.sort, asc: state.asc, pct: state.pct, at: Date.now(),
+      sort: state.sort, asc: state.asc, pct: state.pct,
+      offBoard: state.offBoard, numbers: state.numbers,
+      follow: follow.on, followExtra: follow.extra, followExtraMine: follow.extraMine,
+      at: Date.now(),
     };
     try { localStorage.setItem("bluelinedraft", JSON.stringify(payload)); } catch {}
     if (!store) return;
@@ -2145,6 +2369,14 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     // does not know rather than inventing an order for it.
     const saved = (payload.order || []).filter((i) => state.gone.has(i));
     state.order = saved.length === state.gone.size ? saved : [];
+    state.offBoard = Number.isFinite(payload.offBoard) && payload.offBoard > 0 ? payload.offBoard : 0;
+    state.numbers = {};
+    for (const [i, k] of Object.entries(payload.numbers || {})) {
+      if (state.gone.has(Number(i)) && Number.isFinite(k)) state.numbers[i] = k;
+    }
+    follow.extra = (payload.followExtra || []).filter((i) => P[i]);
+    follow.extraMine = (payload.followExtraMine || []).filter((i) => follow.extra.includes(i));
+    follow.resume = payload.follow === true;
     if (payload.shapeMode === "tier" || payload.shapeMode === "vorp") state.shapeMode = payload.shapeMode;
     state.compare = (payload.compare || []).filter((i) => P[i]).slice(0, MAX_COMPARE);
     if (Number.isFinite(payload.slot)) state.slot = payload.slot;
@@ -2171,6 +2403,8 @@ table.rtable tr.bench td.slot { color: var(--faint); }
   document.getElementById("kicker").textContent = DATA.kicker;
   syncFilters();
   render();
+  // A page that was following when it was closed picks up where it left off.
+  if (follow.resume && CAN_FOLLOW) setFollow(true);
 
   useCap("db").then((db) => {
     if (!db) { note("Local to this browser"); return; }
