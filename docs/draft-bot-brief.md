@@ -31,6 +31,7 @@ goalies GS 1, W 6, GA −1.5, SV 0.3, SHO 4.
 | `scarcity.csv` | Drop-off curve: projected points by rank within position |
 | `draws_batch_*.npz` | The posterior itself — `draws` (fantasy totals), `games_played`, `stat_<category>`, all `(n_draws, n_players)` |
 | `diagnostics.csv` | Per-batch r-hat, ESS, divergences |
+| `form.csv` | Per skater with 40+ games in each of the last three seasons: last season's fantasy points a game (`per_game`), the average of the two before (`before_per_game`, rescaled to last season's league scoring), `swing`, and `flag` (`hot` / `cold` at ±12%). Warehouse facts, not model output |
 | `config/eligibility_2026.csv` | Yahoo position eligibility, `nhl_id → positions` |
 
 Goalies come from their own board directory (`artifacts/goalies_v2`):
@@ -250,9 +251,17 @@ absence from the board is not evidence a player is bad.
   overwhelmingly for shorthanded points, where most seasons are 0 or 1 — so
   counting a tie as a loss biases those comparisons downward. Prefer
   tie-splitting.
-- **"Cost of waiting"** in the UI assumes the next N picks come off the top of
-  the value board. The room will not do that. It is a direction and rough
-  magnitude, not a forecast.
+- **"Value if I wait" on the page and `cost_of_waiting` from the API are one
+  model.** Both simulate the room drafting in its own order (average pick over
+  saved Yahoo mocks) toward each team's open slots - it replaced the assumption
+  that the room drafts down our board, which priced waiting on C, LW, RW and G
+  25-50 points too high and read defence as free. The page carries its own
+  JavaScript copy, held to the Python by a test, so the two agree to within the
+  noise of the simulation (about a point). One difference is the page's, not
+  the model's: nobody can mark a pick of a player who is not on the board, so
+  after the first one the page's clock runs behind and it stops reading the
+  other teams' rosters. The API counts those picks and does not have the
+  problem.
 
 ### 12. Season and identity gotchas inherited from the warehouse
 
@@ -265,6 +274,17 @@ absence from the board is not evidence a player is bad.
   projection for the wrong player and nothing downstream can detect it. Record
   the miss. This has already bitten once: Vancouver had two Elias Petterssons,
   a centre and a defenceman.
+
+### 13. The projection carries most of a hot season forward
+
+Measured on three held-out seasons (2023-24 to 2025-26): after a steady season
+the model over-projected the next one by 0.24 fantasy points a game; after a
+season 12% or more above the two before (`form.csv` flag `hot`), by 0.48 -
+0.39 under 30, 0.68 at 30 and over. After a `cold` season, by 0.13: it expects
+part of a dip back, and part came back. Five model changes were tested against
+this and none was kept (`docs/architecture.md`, "Hot and cold seasons are
+marked, not corrected"), so treat a `hot` player's projection as high rather
+than adjusting the posterior.
 
 ---
 

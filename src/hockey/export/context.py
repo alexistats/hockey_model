@@ -20,14 +20,15 @@ import pandas as pd
 from sqlalchemy import text
 
 from hockey.db import SessionLocal
+from hockey.export.form import previous_season, season_swing, season_totals
 from hockey.seasons import PROJECTION_SEASON
-from hockey.yahoo.settings import load_weeks_from_yaml
+from hockey.yahoo.settings import load_scoring_from_yaml, load_weeks_from_yaml
 
 logger = logging.getLogger(__name__)
 
 
 def write_draft_context(out: Path, season: int = PROJECTION_SEASON) -> bool:
-    """Write schedule.csv, weeks.csv and injuries.csv into a board directory.
+    """Write schedule.csv, weeks.csv, injuries.csv and form.csv into a board directory.
 
     Returns False when the warehouse is unreachable, having written nothing and
     said so. An export without a calendar is a board that cannot answer the
@@ -64,6 +65,11 @@ def write_draft_context(out: Path, season: int = PROJECTION_SEASON) -> bool:
                 ).all(),
                 columns=["player_id", "status", "injury_type", "synced_at"],
             )
+            # The last three completed seasons, for the hot and cold flags.
+            last = previous_season(season)
+            totals = season_totals(
+                session, [previous_season(previous_season(last)), previous_season(last), last]
+            )
     except Exception as exc:  # the warehouse is down, or empty
         logger.warning(
             "no draft context written: the warehouse is unreachable (%s). The board "
@@ -92,6 +98,14 @@ def write_draft_context(out: Path, season: int = PROJECTION_SEASON) -> bool:
     calendar.to_csv(out / "schedule.csv", index=False)
     pd.DataFrame(weeks).to_csv(out / "weeks.csv", index=False)
     injuries.to_csv(out / "injuries.csv", index=False)
+    form = season_swing(totals, load_scoring_from_yaml(), last)
+    form.to_csv(out / "form.csv", index=False)
+    logger.info(
+        "form: %d skaters with three full seasons, %d hot and %d cold",
+        len(form),
+        int((form["flag"] == "hot").sum()),
+        int((form["flag"] == "cold").sum()),
+    )
 
     logger.info(
         "draft context: %d team-games across %d teams, %d week(s), %d injured player(s)",

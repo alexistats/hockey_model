@@ -23,6 +23,7 @@ import pandas as pd
 
 from hockey.export import add_value_over_replacement, replacement_levels, replacement_slots
 from hockey.seasons import PROJECTION_SEASON
+from hockey.serve.room import RoomModel
 from hockey.yahoo.eligibility import load_csv as load_eligibility
 from hockey.yahoo.settings import load_roster_from_yaml
 
@@ -48,6 +49,11 @@ class Board:
     weeks: list[dict] = field(default_factory=list)
     injuries: dict[int, dict] = field(default_factory=dict)
     context_from: dict[str, str] = field(default_factory=dict)
+    # How the rest of the room drafts, fitted on saved mock drafts. None when
+    # no room file exists, and then `cost_of_waiting` says it cannot answer
+    # rather than falling back to a room that drafts off our board, which is
+    # the assumption that was measured wrong.
+    room: RoomModel | None = None
 
     @property
     def column_of(self) -> dict[int, int]:
@@ -123,6 +129,8 @@ def load(directory: Path, goalies: Path | None = None, n_teams: int = 14) -> Boa
         worst = pd.read_csv(goalies / "diagnostics.csv")["worst_rhat"].max()
         fitted["goalie_worst_rhat"] = f"{float(worst):.4f}"
 
+    room = _room(players)
+
     logger.info(
         "board loaded: %d players (%d goalies), %d draws each",
         len(players),
@@ -142,7 +150,38 @@ def load(directory: Path, goalies: Path | None = None, n_teams: int = 14) -> Boa
         weeks=weeks,
         injuries=injuries,
         context_from=context_from,
+        room=room,
     )
+
+
+def _room(players: pd.DataFrame) -> RoomModel | None:
+    """The room model for this season, and a word if it cannot see this board.
+
+    The room's order is keyed by player id and was read off the board the mocks
+    were drafted against. A player it never saw drafted gets the undrafted
+    order - a round past the end - which is right for a fringe player and wrong
+    for a star, so if the top of this board is missing from it, say so.
+    """
+    path = Path(f"config/room_{PROJECTION_SEASON // 10000}.json")
+    if not path.exists():
+        logger.warning(
+            "no %s, so cost_of_waiting cannot say what the room will take. Build it from "
+            "saved mock drafts: python -m hockey.serve.room --mocks <draft_bot mocks dir>",
+            path,
+        )
+        return None
+    room = RoomModel.load(path)
+    top = players.sort_values("vorp", ascending=False).head(150)["player_id"].astype(int)
+    missing = [p for p in top if p not in room.adp]
+    if len(missing) > 15:
+        logger.warning(
+            "%d of the board's top 150 have no draft position in %s; the room model was "
+            "fitted against a different board and will treat them as undrafted",
+            len(missing),
+            path,
+        )
+    logger.info("room model: %s, fitted %s", room.source, room.fitted)
+    return room
 
 
 def _draft_context(directory: Path) -> tuple[dict, list, dict, dict]:

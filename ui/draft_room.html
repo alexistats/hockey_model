@@ -230,6 +230,16 @@ input[type="search"] { min-width: 210px; }
 }
 .seg button:last-child { border-right: 0; }
 .seg button[aria-pressed="true"] { background: var(--line); color: var(--on-accent); font-weight: 600; }
+.seg .pctseg {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--slate);
+  padding: 3px 8px 3px 11px; border-right: 1px solid var(--edge-soft); cursor: pointer;
+}
+.seg .pctseg.on { background: var(--line); color: var(--on-accent); font-weight: 600; }
+.seg .pctseg input {
+  width: 44px; font: inherit; font-family: var(--mono); font-size: 12px; font-weight: 500;
+  color: var(--ink); background: var(--surface); border: 1px solid var(--edge); border-radius: 3px;
+  padding: 1px 4px; text-align: right;
+}
 .spacer { flex: 1 1 auto; }
 
 /* ---- main grid ---- */
@@ -262,6 +272,9 @@ tr.mine td:first-child { box-shadow: inset 3px 0 0 var(--green); }
 .rk { font-family: var(--mono); font-size: 12px; color: var(--faint); width: 34px; }
 .pname { font-weight: 600; font-size: 13.5px; letter-spacing: -.005em; }
 .psub { font-size: 11px; color: var(--faint); letter-spacing: .03em; }
+.swing { font-family: var(--mono); font-size: 10px; font-weight: 600; margin-left: 6px; cursor: help; }
+.swing.hot { color: var(--red); }
+.swing.cold { color: var(--line-bright); }
 .chip {
   display: inline-block; font-family: var(--mono); font-size: 10px; font-weight: 600;
   padding: 1px 5px; border-radius: 3px; background: var(--well); color: var(--slate);
@@ -359,6 +372,41 @@ thead th.rangehead { padding-bottom: 2px; vertical-align: bottom; }
 
 footer { color: var(--faint); font-size: 11.5px; line-height: 1.6; max-width: 66ch; }
 footer b { color: var(--slate); font-weight: 600; }
+
+/* ---- over the board: the players left, or my roster ---- */
+.tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; padding: 0 12px; border-bottom: 1px solid var(--edge); }
+.tabs [role="tab"] {
+  font: inherit; font-size: 12.5px; font-weight: 600; color: var(--slate); background: none; border: 0;
+  border-bottom: 2px solid transparent; margin-bottom: -1px; padding: 10px 10px 8px; cursor: pointer;
+}
+.tabs [role="tab"]:hover { color: var(--ink); }
+.tabs [role="tab"][aria-selected="true"] { color: var(--ink); border-bottom-color: var(--line); }
+.tabs .tabn { font-family: var(--mono); font-size: 11px; font-weight: 500; color: var(--faint); margin-left: 5px; }
+.tabs .waitset { margin-left: auto; padding: 6px 0; }
+
+/* schedule fit: nights he would be in my lineup, of his team's games */
+.fit { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+.fit .of { color: var(--faint); font-weight: 400; font-size: 11px; }
+.fit.approx { color: var(--slate); font-weight: 500; }
+
+/* ---- my roster ---- */
+.roster-view { padding: 14px 16px 16px; }
+.roster-view[hidden], .scroller[hidden] { display: none; }
+.lineup-sum { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 10px; margin-bottom: 8px; }
+.lsum { border: 1px solid var(--edge); border-radius: 4px; padding: 8px 10px 7px; border-top: 3px solid var(--line); }
+.lsum .head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.lsum .pos { font-stretch: 62%; font-weight: 700; font-size: 17px; letter-spacing: .04em; }
+.lsum .big { font-family: var(--mono); font-size: 18px; font-weight: 600; }
+.lsum .sub { font-size: 10.5px; color: var(--faint); letter-spacing: .02em; }
+.lsum .bar { height: 5px; background: var(--well); border-radius: 3px; overflow: hidden; margin: 6px 0 4px; }
+.lsum .bar i { display: block; height: 100%; background: var(--line); }
+.rnote { font-size: 11.5px; color: var(--slate); margin: 0 0 12px; }
+.rnote b { font-family: var(--mono); color: var(--ink); font-weight: 600; }
+table.rtable thead th { position: static; cursor: default; }
+table.rtable td.slot { font-stretch: 62%; font-weight: 700; font-size: 15px; letter-spacing: .04em; text-align: left; width: 46px; }
+table.rtable tr.open td { color: var(--faint); font-style: italic; cursor: default; }
+table.rtable tr.open:hover { background: none; }
+table.rtable tr.bench td.slot { color: var(--faint); }
 </style>
 
 <div class="shell">
@@ -391,6 +439,9 @@ footer b { color: var(--slate); font-weight: 600; }
         <input type="number" id="draftslot" min="1" step="1" value="8">
         <span id="slotline"></span>
       </label>
+      <label class="waitset" title="How many rounds this draft runs. Mocks often run fewer than the roster.">
+        <input type="number" id="draftrounds" min="1" max="30" step="1"> rounds
+      </label>
     </div>
     <div class="shape-body">
       <div><table class="grid" id="shapegrid"></table></div>
@@ -407,12 +458,12 @@ footer b { color: var(--slate); font-weight: 600; }
     <input type="search" id="q" placeholder="Search a player" aria-label="Search a player">
     <div class="seg" id="posfilter" role="group" aria-label="Filter by position"></div>
     <div class="seg" id="sortby" role="group" aria-label="Sort the board">
-      <button data-sort="rs" aria-pressed="true" title="The order the draft bot picks in">Score</button>
-      <button data-sort="vorp" aria-pressed="false">Value</button>
-      <button data-sort="m" aria-pressed="false">Points</button>
-      <button data-sort="f" aria-pressed="false">Floor</button>
-      <button data-sort="c" aria-pressed="false">Ceiling</button>
-      <button data-sort="g" aria-pressed="false">Games</button>
+      <button data-sort="vorp" aria-pressed="true" title="Points over the replacement player at his position">Value</button>
+      <button data-sort="m" aria-pressed="false" title="Mean season fantasy points">Points</button>
+      <label class="pctseg" id="pctseg" title="Sort by any percentile of a player's season: 80 for the upside, 30 for the downside">Percentile
+        <input type="number" id="pctin" min="1" max="99" step="1" aria-label="Percentile to sort by"></label>
+      <button data-sort="fit" aria-pressed="false" title="Games he would add to my lineup, against my roster as it stands">Fits</button>
+      <button data-sort="off" aria-pressed="false" title="His team's games on off nights">Off nights</button>
     </div>
     <button class="btn" id="hidegone" aria-pressed="false">Hide drafted</button>
     <span class="spacer"></span>
@@ -422,7 +473,14 @@ footer b { color: var(--slate); font-weight: 600; }
 
   <div class="work">
     <div class="board-wrap">
-      <div class="scroller">
+      <div class="tabs" role="tablist" aria-label="What the board shows">
+        <button role="tab" id="tab-board" data-view="board" aria-controls="boardview" aria-selected="true">Players</button>
+        <button role="tab" id="tab-roster" data-view="roster" aria-controls="rosterview" aria-selected="false">My roster<span class="tabn" id="tab-roster-n">0</span></button>
+        <label class="waitset" title="Nights when fewer than half the league's teams play. My lineup has more open slots on those nights, so a player whose team plays them fits more often.">Off night: ≤
+          <input type="number" id="offmax" min="1" max="16" step="1"> games</label>
+      </div>
+      <div class="roster-view" id="rosterview" role="tabpanel" aria-labelledby="tab-roster" hidden></div>
+      <div class="scroller" id="boardview" role="tabpanel" aria-labelledby="tab-board">
         <table>
           <thead>
             <tr>
@@ -435,9 +493,11 @@ footer b { color: var(--slate); font-weight: 600; }
                 <div class="axis" id="axis"></div>
               </th>
               <th data-sort="m">Points</th>
-              <th data-sort="vorp">Value</th>
-              <th data-sort="rs" aria-sort="descending" title="Value blended from cautious to ambitious as the draft goes on">Score</th>
-              <th data-sort="g">Games</th>
+              <th data-sort="vorp" aria-sort="descending">Value</th>
+              <th data-sort="pq" id="pcthead" title="Season fantasy points at the percentile set in the sort bar">P80</th>
+              <th class="plain">Games</th>
+              <th data-sort="fit" title="Games he would add to my lineup this season, of his team's games: nights my lineup, as it stands, has room for him">Fits</th>
+              <th data-sort="off" title="His team's games on off nights">Off nights</th>
               <th class="plain"></th>
             </tr>
           </thead>
@@ -547,15 +607,36 @@ footer b { color: var(--slate); font-weight: 600; }
 
   const beats = (a, b) => probBeats(col(a), col(b));
 
+  // Every player's draws sorted once, so any percentile typed in is a lookup
+  // rather than a sort of 361 players' seasons.
+  const SORTED = P.map((p) => Int16Array.from(col(p.i)).sort());
+  function setPercentile() {
+    const q = state.pct / 100;
+    for (const p of P) p.pq = quantile(SORTED[p.i], q);
+    document.getElementById("pcthead").textContent = `P${state.pct}`;
+  }
+
   const POSITIONS = DATA.positions;
   const state = {
-    sort: "rs", asc: false, pos: "ALL", q: "",
+    sort: "vorp", asc: false, pos: "ALL", q: "",
+    // The percentile the P column shows and sorts by.
+    pct: 80,
     hideGone: false, selected: P[0] ? P[0].i : null,
     gone: new Set(), mine: [],
     // `order` is `gone` in pick sequence, which is the only way to see a run:
     // a set says six defencemen are off the board, not that they went in a row.
     order: [], roster: [], compare: [], shapeMode: "tier", slot: DATA.draftSlot || 1,
+    // Set from the rounds box when this draft runs fewer rounds than the roster
+    // holds, as the mocks do. Unset, the rules' draft_rounds, then the roster.
+    rounds: null,
+    // Which tab the board shows, and the most games a night can have and still
+    // count as an off night.
+    view: "board",
+    offMax: DATA.offNightMax || 7,
   };
+
+  // The sorts the bar and the table header offer.
+  const SORTS = new Set(["vorp", "m", "pq", "fit", "off", "a"]);
 
   /* ---------- where my turns fall ---------- */
   // Overall pick number of my `r`-th round, counting rounds from 1. In a snake
@@ -632,7 +713,6 @@ footer b { color: var(--slate); font-weight: 600; }
       takenAt.set(p.i, pick);
     }
     const spare = live.filter((p) => !takenAt.has(p.i));
-    const weight = riskWeight();
     levels = {};
     freeBelow = {};
     for (const pos of POSITIONS) {
@@ -661,30 +741,17 @@ footer b { color: var(--slate); font-weight: 600; }
         : p.p;
       p.slot = best;
       p.vorp = p.m - (levels[best] || 0);
-      // The bot's order: p20 and p80, each over the same replacement level, so
-      // positions stay comparable. Raw floors bury defencemen and raw ceilings
-      // float goalies; measured this way neither does.
-      const repl = levels[best] || 0;
-      p.rs = DATA.rules && DATA.rules.rank_by === "vorp"
-        ? p.vorp
-        : (1 - weight) * (p.l - repl) + weight * (p.h - repl);
     }
   }
 
   // Which round the next pick falls in, counting from 1.
   const currentRound = () => Math.floor(state.order.length / DATA.nTeams) + 1;
 
-  // Weight on the optimistic end, ramped from the first round to the last.
-  // The same function as the draft API's `risk_weight`, from the same rules.
-  function riskWeight() {
-    const r = DATA.rules || {};
-    const start = r.risk_start ?? 0.2, end = r.risk_end ?? 0.8;
-    if (r.rank_by === "vorp") return 0.5;
-    const rounds = Object.values(DATA.rosterShape).reduce((s, n) => s + n, 0) + (DATA.bench || 0);
-    if (rounds <= 1) return end;
-    const t = Math.min(1, Math.max(0, (currentRound() - 1) / (rounds - 1)));
-    return start + t * (end - start);
-  }
+  // How many rounds this draft runs, which the deadline is counted against:
+  // the rounds box, then the rules' draft_rounds, then the roster.
+  const draftRounds = () => state.rounds
+    || (DATA.rules && DATA.rules.draft_rounds)
+    || Object.values(DATA.rosterShape).reduce((s, n) => s + n, 0) + (DATA.bench || 0);
 
   // Why a goalie may not be taken yet, or null. Mirrors the API's rule check,
   // so the page never tells me to take a position the bot is forbidden to.
@@ -753,7 +820,11 @@ footer b { color: var(--slate); font-weight: 600; }
     let list = P.filter((p) => {
       // Filtering by a position asks who could fill it, so this is eligibility
       // rather than the single slot the player is currently valued at.
-      if (state.pos !== "ALL" && !eligible(p).includes(state.pos)) return false;
+      if (state.pos === "SK") {
+        if (eligible(p).includes("G")) return false;
+      } else if (state.pos !== "ALL" && !eligible(p).includes(state.pos)) {
+        return false;
+      }
       if (state.hideGone && state.gone.has(p.i)) return false;
       if (q && !p.n.toLowerCase().includes(q) && !p.t.toLowerCase().includes(q)) return false;
       return true;
@@ -776,7 +847,7 @@ footer b { color: var(--slate); font-weight: 600; }
                   aria-selected="${state.selected === p.i}">
         <td class="rk">${n + 1}</td>
         <td class="left">
-          <div class="pname">${p.n}</div>
+          <div class="pname">${p.n}${swingBadge(p)}</div>
           <div class="psub">${eligible(p).join("/")} · ${p.t}${p.a == null ? "" : " · " + p.a + "y"}</div>
         </td>
         <td>${p.tier ? `<span class="${tierClass}">${p.tslot}${p.tier}</span>` : ""}</td>
@@ -788,8 +859,10 @@ footer b { color: var(--slate); font-weight: 600; }
         </td>
         <td class="mval">${fmt0(p.m)}</td>
         <td class="vorp ${p.vorp < 0 ? "neg" : ""}">${signed(p.vorp)}</td>
-        <td class="vorp ${p.rs < 0 ? "neg" : ""}">${signed(p.rs)}</td>
+        <td class="mval">${fmt0(p.pq)}</td>
         <td class="dim">${fmt0(p.g)}</td>
+        <td>${fitCell(p)}</td>
+        <td class="dim">${CAL ? p.off : "—"}</td>
         <td class="acts">
           <button class="mini ${cmp.has(p.i) ? "cmp-on" : ""}" data-act="cmp" title="Compare">⇄</button>
           <button class="mini ${mine.has(p.i) ? "on" : ""}" data-act="mine" title="Add to my list">★</button>
@@ -872,13 +945,14 @@ footer b { color: var(--slate); font-weight: 600; }
   // showed up as a third left winger while centre looked empty, so a complete
   // roster looked lopsided and the needs panel asked for positions I had
   // covered. Same rule as the API's assign_roster, and as `fill_slots`, which is
-  // where the rule belongs.
-  function myLineup() {
+  // where the rule belongs. Any team's roster, because the room model asks what
+  // each of the other teams is still missing.
+  function lineupOf(roster) {
     const openings = {};
     for (const pos of SHAPE()) openings[pos] = DATA.rosterShape[pos];
     const assigned = new Map();
     const bench = [];
-    for (const i of [...state.roster].sort((a, b) => P[b].m - P[a].m)) {
+    for (const i of [...roster].sort((a, b) => P[b].m - P[a].m)) {
       const open = eligible(P[i]).filter((pos) => openings[pos] > 0);
       if (!open.length) { bench.push(i); continue; }
       const pick = open.reduce((a, b) => (openings[b] > openings[a] ? b : a));
@@ -892,6 +966,8 @@ footer b { color: var(--slate); font-weight: 600; }
     return { assigned, bench, filled, need };
   }
 
+  const myLineup = () => lineupOf(state.roster);
+
   function myNeeds() {
     const { filled, need } = myLineup();
     return { filled, need };
@@ -901,9 +977,7 @@ footer b { color: var(--slate); font-weight: 600; }
   // roster_pressure reports: value alone cannot see that the draft ends, and an
   // unfilled starting slot scores zero all season.
   function pressureOf(need) {
-    const rounds = state.rounds || (Object.values(DATA.rosterShape).reduce((a, b) => a + b, 0)
-                                    + (DATA.bench || 0));
-    const picksLeft = Math.max(0, rounds - state.roster.length);
+    const picksLeft = Math.max(0, draftRounds() - state.roster.length);
     const slotsOpen = SHAPE().reduce((n, pos) => n + need[pos], 0);
     const slack = picksLeft - slotsOpen;
     const base = (DATA.rules && DATA.rules.need_first_margin) || 25;
@@ -911,23 +985,402 @@ footer b { color: var(--slate); font-weight: 600; }
     return { picksLeft, slotsOpen, slack, margin };
   }
 
-  // What a position costs me if I pass on it now. The next `picks` picks are
-  // assumed to come off the top of the value board, which is the assumption the
-  // room mostly behaves like and the only one available without knowing the
-  // other managers. It is stated on the page for that reason.
-  function costOfWaiting(picks) {
-    const pool = P.filter((p) => !state.gone.has(p.i)).sort((a, b) => b.vorp - a.vorp);
-    const taken = new Set(pool.slice(0, picks).map((p) => p.i));
-    const best = (pos, skip) => {
-      const c = pool.find((p) => eligible(p).includes(pos) && !(skip && taken.has(p.i)));
-      return c ? c.vorp : null;
+  /* schedule:begin
+     Games, not points. A late pick is worth the nights he would put one more
+     game in my lineup: each night the lineup is set the way a manager sets it -
+     as many slots filled as possible, the best players in them - and a player
+     adds a game only on a night it has room for him, directly or by moving one
+     of mine who is eligible elsewhere. A better player on a full night just
+     bumps one of mine. The draft API's `lineup`, `added_games` and
+     `marginal_starts`, as a second copy, so tests/test_schedule.py runs this
+     block under Node and holds it to the Python. Keep it self-contained. */
+
+  // One night's lineup: best first, each starting if the slots can be moved
+  // around to take him without benching anyone already in.
+  function nightLineup(players, shape) {
+    const units = [];
+    for (const s of Object.keys(shape)) for (let k = 0; k < shape[s]; k++) units.push(s);
+    const holder = new Array(units.length).fill(-1);
+    const place = (i, seen) => {
+      for (let u = 0; u < units.length; u++) {
+        if (seen[u] || !players[i].elig.includes(units[u])) continue;
+        seen[u] = true;
+        if (holder[u] < 0 || place(holder[u], seen)) { holder[u] = i; return true; }
+      }
+      return false;
     };
+    const order = players.map((_, i) => i).sort((a, b) => players[b].mean - players[a].mean);
+    for (const i of order) place(i, new Array(units.length).fill(false));
+    return { units, holder, players };
+  }
+
+  // Whether a night's lineup has room for one more player, moving starters if
+  // that frees a slot he fits. Changes nothing.
+  function roomFor(night, elig) {
+    const seen = new Array(night.units.length).fill(false);
+    const free = (e) => {
+      for (let u = 0; u < night.units.length; u++) {
+        if (seen[u] || !e.includes(night.units[u])) continue;
+        seen[u] = true;
+        if (night.holder[u] < 0 || free(night.players[night.holder[u]].elig)) return true;
+      }
+      return false;
+    };
+    return free(elig);
+  }
+
+  // Each night the roster's players are on the ice, and its lineup.
+  function seasonLineups(roster, calendar, shape) {
+    const on = new Map();
+    for (const r of roster) {
+      for (const d of calendar[r.team] || []) {
+        if (!on.has(d)) on.set(d, []);
+        on.get(d).push(r);
+      }
+    }
+    const nights = new Map();
+    for (const [d, players] of on) nights.set(d, nightLineup(players, shape));
+    return nights;
+  }
+
+  // added(who, first, last): his team's games in the window, and on how many
+  // he would put one more game in my lineup. A player on the roster is counted
+  // against the rest of it.
+  function addsCounter(roster, calendar, shape) {
+    const nights = seasonLineups(roster, calendar, shape);
+    const empty = nightLineup([], shape);
+    return (who, first, last) => {
+      const days = (calendar[who.team] || []).filter((d) => d >= first && d <= last);
+      let added = 0;
+      for (const d of days) {
+        let night = nights.get(d) || empty;
+        if (night.players.some((r) => r.id === who.id)) {
+          night = nightLineup(night.players.filter((r) => r.id !== who.id), shape);
+        }
+        if (roomFor(night, who.elig)) added++;
+      }
+      return { games: days.length, added };
+    };
+  }
+
+  // Nights each roster player is in the lineup, over the window.
+  function rosterStarts(roster, calendar, shape, first, last) {
+    const starts = {};
+    for (const r of roster) starts[r.id] = 0;
+    for (const [d, night] of seasonLineups(roster, calendar, shape)) {
+      if (d < first || d > last) continue;
+      for (const i of night.holder) if (i >= 0) starts[night.players[i].id]++;
+    }
+    return starts;
+  }
+
+  // Slot-nights my lineup fills in the window, by slot.
+  function lineupNights(roster, calendar, shape, first, last) {
+    const filled = {};
+    for (const s of Object.keys(shape)) filled[s] = 0;
+    for (const [d, night] of seasonLineups(roster, calendar, shape)) {
+      if (d < first || d > last) continue;
+      night.holder.forEach((i, u) => { if (i >= 0) filled[night.units[u]]++; });
+    }
+    return filled;
+  }
+
+  // Each team's games on off nights: nights with `maxGames` games or fewer.
+  function offNightGames(calendar, maxGames) {
+    const teams = new Map();
+    for (const days of Object.values(calendar)) {
+      for (const d of days) teams.set(d, (teams.get(d) || 0) + 1);
+    }
     const out = {};
-    for (const pos of SHAPE()) {
-      const now = best(pos, false), then = best(pos, true);
-      out[pos] = { now, then, cost: now === null || then === null ? null : now - then };
+    for (const [team, days] of Object.entries(calendar)) {
+      out[team] = days.filter((d) => teams.get(d) / 2 <= maxGames).length;
     }
     return out;
+  }
+  /* schedule:end */
+
+  /* room:begin
+     The other managers' picks between now and my next turn, simulated. The same
+     room as the draft API's `hockey.serve.room.expected_after`: each pick is the
+     best of -w*ln(average pick), plus a bonus for filling an open slot of the
+     team picking, plus Gumbel noise - against a constant for somebody not on
+     this board. The page used to assume the room drafts straight down this
+     board, which it has never seen; measured on saved mocks that priced waiting
+     on forwards and goalies 25-50 points too high and read defence as free.
+
+     A second copy of the API's model, which this project has learned to
+     distrust, so tests/test_room.py runs this block under Node and holds it to
+     the Python on the same inputs. Keep it self-contained: nothing from the
+     page inside the markers. */
+  function roomExpectedAfter(pool, positions, seats, room, openings, sims, seed) {
+    let s = seed >>> 0;
+    const uniform = () => {
+      // mulberry32: seeded, so one board state always gives one answer.
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return (((t ^ (t >>> 14)) >>> 0) + 0.5) / 4294967296;
+    };
+    const gumbel = () => -Math.log(-Math.log(uniform()));
+    const blind = openings == null;
+    const w = blind && room.blindOrderWeight != null ? room.blindOrderWeight : room.orderWeight;
+    const off = blind && room.blindOffBoard != null ? room.blindOffBoard : room.offBoard;
+    const n = pool.length, k = positions.length;
+    const base = pool.map((p) => -w * Math.log(p.adp == null ? room.undrafted : p.adp));
+    const elig = pool.map((p) => positions.map((pos) => p.elig.includes(pos)));
+    const ranked = positions.map((_, j) => pool.map((_, i) => i)
+      .filter((i) => elig[i][j]).sort((a, b) => pool[b].vorp - pool[a].vorp));
+    const sum = new Float64Array(k), some = new Int32Array(k), kept = new Int32Array(k);
+    const teams = [...new Set(seats)];
+    for (let m = 0; m < sims; m++) {
+      const avail = new Uint8Array(n).fill(1);
+      const left = blind ? null : Object.fromEntries(teams.map((t) =>
+        [t, positions.map((pos) => (openings[t] && openings[t][pos]) || 0)]));
+      for (const seat of seats) {
+        const open = left && left[seat];
+        let best = -1, top = -Infinity;
+        for (let i = 0; i < n; i++) {
+          if (!avail[i]) continue;
+          let u = base[i];
+          if (open) {
+            for (let j = 0; j < k; j++) if (elig[i][j] && open[j] > 0) { u += room.needWeight; break; }
+          }
+          u += gumbel();
+          if (u > top) { top = u; best = i; }
+        }
+        if (best < 0 || top <= off + gumbel()) continue;  // somebody off this board
+        avail[best] = 0;
+        if (open) {
+          // Into the open slot he fits with the most room, as the league fills.
+          let slot = -1;
+          for (let j = 0; j < k; j++) {
+            if (elig[best][j] && open[j] > 0 && (slot < 0 || open[j] > open[slot])) slot = j;
+          }
+          if (slot >= 0) open[slot]--;
+        }
+      }
+      for (let j = 0; j < k; j++) {
+        const order = ranked[j];
+        if (!order.length) continue;
+        if (avail[order[0]]) kept[j]++;
+        for (const i of order) if (avail[i]) { sum[j] += pool[i].vorp; some[j]++; break; }
+      }
+    }
+    const out = {};
+    positions.forEach((pos, j) => {
+      const order = ranked[j];
+      if (!order.length) { out[pos] = null; return; }
+      const now = pool[order[0]].vorp;
+      // Emptied in most simulated rooms: no "best left" to speak of.
+      const then = some[j] >= 0.5 * sims ? sum[j] / some[j] : null;
+      out[pos] = {
+        best_now: now,
+        best_after: then,
+        cost: then === null ? null : Math.max(0, now - then),
+        p_best_survives: kept[j] / sims,
+      };
+    });
+    return out;
+  }
+  /* room:end */
+
+  // The seat that makes overall pick `number`.
+  function seatOf(number) {
+    const n = DATA.nTeams;
+    const round = Math.floor((number - 1) / n) + 1;
+    const within = ((number - 1) % n) + 1;
+    return DATA.snake && round % 2 === 0 ? n + 1 - within : within;
+  }
+
+  // Who picks, in order, before my next turn - the same window picksUntilTurn
+  // counts.
+  function seatsBeforeMyTurn(picks) {
+    const current = state.order.length + 1;
+    const onClock = current === myPick(Math.floor((current - 1) / DATA.nTeams) + 1);
+    const start = current + (onClock ? 1 : 0);
+    return Array.from({ length: picks }, (_, k) => seatOf(start + k));
+  }
+
+  // Whether the marked order can be read as the draft's order. My own picks are
+  // the check: marked in sequence, every one lands on my seat. A pick nobody
+  // marked - somebody not on this board - shifts every number after it, and
+  // then each team's roster read from the order would be somebody else's.
+  function orderCheck() {
+    const numbered = state.roster.map((i) => state.order.indexOf(i) + 1).filter((k) => k > 0);
+    if (!numbered.length) return "unchecked";
+    return numbered.every((k) => seatOf(k) === state.slot) ? "consistent" : "inconsistent";
+  }
+
+  // Each team's open starting slots, from the players the marked order gives it.
+  function openingsBySeat(seats) {
+    const held = {};
+    state.order.forEach((i, k) => {
+      const seat = state.roster.includes(i) ? state.slot : seatOf(k + 1);
+      (held[seat] ||= []).push(i);
+    });
+    const out = {};
+    for (const seat of seats) out[seat] = lineupOf(held[seat] || []).need;
+    return out;
+  }
+
+  // What a position costs me if I pass on it now: the drop in the best player
+  // left there by my next turn, expected over simulated rooms. Without a room
+  // model on the page, null - no claim about the room rather than a wrong one.
+  function costOfWaiting(picks) {
+    const positions = SHAPE();
+    const out = {};
+    const none = { now: null, then: null, cost: null, p: null };
+    if (!DATA.room) {
+      for (const pos of positions) out[pos] = none;
+      return out;
+    }
+    const pool = P.filter((p) => !state.gone.has(p.i))
+      .map((p) => ({ vorp: p.vorp, elig: eligible(p), adp: p.o }));
+    const seats = seatsBeforeMyTurn(picks);
+    const openings = orderCheck() === "inconsistent" ? null : openingsBySeat(new Set(seats));
+    const sim = roomExpectedAfter(pool, positions, seats, DATA.room, openings,
+                                  DATA.room.sims, state.order.length + 1);
+    for (const pos of positions) {
+      const c = sim[pos];
+      out[pos] = c ? { now: c.best_now, then: c.best_after, cost: c.cost, p: c.p_best_survives } : none;
+    }
+    return out;
+  }
+
+  /* ---------- the schedule, against my roster ---------- */
+  // Days are indices into DATA.calendar.days; the whole season is the window.
+  const CAL = DATA.calendar ? DATA.calendar.teams : null;
+  const LAST_DAY = DATA.calendar ? DATA.calendar.days.length - 1 : -1;
+  const asEntry = (p) => ({ id: p.i, team: p.t, mean: p.m, elig: eligible(p) });
+
+  // What every player would add to my lineup, and what each of mine starts,
+  // against the roster as it stands. It only moves when the roster or the
+  // off-night cutoff does, so it is kept until one of them changes.
+  let fitKey = null;
+  function scheduleFit() {
+    const key = `${state.roster.join(",")}|${state.offMax}`;
+    if (key !== fitKey) {
+      fitKey = key;
+      if (!CAL) {
+        for (const p of P) { p.fitRaw = -1; p.fitGames = 0; p.off = -1; p.starts = null; }
+      } else {
+        const roster = state.roster.map((i) => asEntry(P[i]));
+        const adds = addsCounter(roster, CAL, DATA.rosterShape);
+        const starts = rosterStarts(roster, CAL, DATA.rosterShape, 0, LAST_DAY);
+        const off = offNightGames(CAL, state.offMax);
+        for (const p of P) {
+          const got = adds(asEntry(p), 0, LAST_DAY);
+          p.fitRaw = got.added;
+          p.fitGames = got.games;
+          p.off = off[p.t] ?? 0;
+          p.starts = starts[p.i] ?? null;
+        }
+      }
+    }
+    // A drafted player adds nothing to my lineup from the board - mine are
+    // already in it - so all of them sort to the bottom of Fits.
+    for (const p of P) p.fit = state.gone.has(p.i) ? -1 : p.fitRaw;
+  }
+
+  // Last season against the two before it, when he has three full seasons. A
+  // mark, not a correction: the projection is the model's, and this shows where
+  // the model has measurably been wrong before.
+  function swingText(p) {
+    const s = p.sw;
+    return `${DATA.swing.season}: ${s.l.toFixed(2)} points a game over ${s.gp} games, against ${
+      s.b.toFixed(2)} over the two seasons before (${s.bgp} games)`;
+  }
+  function swingBadge(p) {
+    const s = p.sw;
+    if (!DATA.swing || !s || !s.f) return "";
+    const title = `${swingText(p)}. ${DATA.swing.note[s.f]}`;
+    return `<span class="swing ${s.f}" title="${title}">${s.f === "hot" ? "▲" : "▼"}${
+      Math.round(Math.abs(s.j) * 100)}%</span>`;
+  }
+
+  // Games he would add to my lineup, of his team's games.
+  function fitCell(p) {
+    if (!CAL || state.gone.has(p.i)) return `<span class="dim">—</span>`;
+    // A goalie is counted on his team's games, and he starts only some of them.
+    const title = isGoalie(p)
+      ? `His team plays ${p.fitGames}; my lineup has room for him on ${p.fitRaw} of those nights, but a goalie starts only about ${fmt0(p.g)} games`
+      : `${p.fitRaw} of his team's ${p.fitGames} games would add a game to my lineup - nights it has room for him. On the rest a better player only bumps one of mine`;
+    return `<span class="fit ${isGoalie(p) ? "approx" : ""}" title="${title}">${isGoalie(p) ? "~" : ""}${p.fitRaw}<span class="of">/${p.fitGames}</span></span>`;
+  }
+
+  // Nights one of my players starts, of his team's games.
+  function startsCell(p) {
+    if (!CAL || p.starts == null) return `<span class="dim">—</span>`;
+    const title = isGoalie(p)
+      ? `In my lineup on ${p.starts} of his team's ${p.fitGames} nights, but a goalie starts only about ${fmt0(p.g)} games`
+      : `In my lineup on ${p.starts} of his team's ${p.fitGames} games`;
+    return `<span class="fit ${isGoalie(p) ? "approx" : ""}" title="${title}">${isGoalie(p) ? "~" : ""}${p.starts}<span class="of">/${p.fitGames}</span></span>`;
+  }
+
+  function showView() {
+    const roster = state.view === "roster";
+    document.getElementById("boardview").hidden = roster;
+    document.getElementById("rosterview").hidden = !roster;
+    document.getElementById("tab-board").setAttribute("aria-selected", String(!roster));
+    document.getElementById("tab-roster").setAttribute("aria-selected", String(roster));
+  }
+
+  // My roster in its slots - starters by position, open slots named, then the
+  // bench - with each player's schedule, and how full each position's lineup
+  // runs over the season.
+  function drawRoster() {
+    document.getElementById("tab-roster-n").textContent = state.roster.length;
+    const el = document.getElementById("rosterview");
+    if (state.view !== "roster") return;
+    const lineup = myLineup();
+    const bySlot = {};
+    for (const [i, pos] of lineup.assigned) (bySlot[pos] ||= []).push(i);
+    const cells = (i) => {
+      const p = P[i];
+      return `<td class="left"><div class="pname">${p.n}</div>
+                <div class="psub">${eligible(p).join("/")} · ${p.t}</div></td>
+              <td class="dim">${CAL ? p.fitGames : "—"}</td>
+              <td class="dim">${CAL ? p.off : "—"}</td>
+              <td>${startsCell(p)}</td>
+              <td class="mval">${fmt0(p.m)}</td>
+              <td class="vorp ${p.vorp < 0 ? "neg" : ""}">${signed(p.vorp)}</td>`;
+    };
+    const rows = [];
+    for (const pos of SHAPE()) {
+      const held = (bySlot[pos] || []).sort((a, b) => P[b].m - P[a].m);
+      for (let k = 0; k < DATA.rosterShape[pos]; k++) {
+        rows.push(held[k] == null
+          ? `<tr class="open"><td class="slot">${pos}</td><td class="left" colspan="6">open</td></tr>`
+          : `<tr data-i="${held[k]}"><td class="slot">${pos}</td>${cells(held[k])}</tr>`);
+      }
+    }
+    for (const i of [...lineup.bench].sort((a, b) => P[b].m - P[a].m)) {
+      rows.push(`<tr class="bench" data-i="${i}"><td class="slot">BN</td>${cells(i)}</tr>`);
+    }
+
+    let summary = "";
+    if (CAL) {
+      const nights = LAST_DAY + 1;
+      const filled = lineupNights(state.roster.map((i) => asEntry(P[i])), CAL,
+                                  DATA.rosterShape, 0, LAST_DAY);
+      const total = Object.values(filled).reduce((a, b) => a + b, 0);
+      summary = `<p class="rnote"><b>${fmt0(total)}</b> games in my lineup this season, of
+          ${nights} nights. Each position: games its slots are filled, of every slot every night.</p>
+        <div class="lineup-sum">${SHAPE().map((pos) => {
+          const cap = DATA.rosterShape[pos] * nights;
+          return `<div class="lsum"><div class="head"><span class="pos">${pos}</span>
+              <span class="big">${fmt0(filled[pos])}</span></div>
+            <div class="bar"><i style="width:${(100 * filled[pos] / cap).toFixed(1)}%"></i></div>
+            <div class="sub">of ${fmt0(cap)} · ${DATA.rosterShape[pos]} slot${DATA.rosterShape[pos] === 1 ? "" : "s"}</div></div>`;
+        }).join("")}</div>`;
+    }
+    el.innerHTML = summary + `<table class="rtable">
+        <thead><tr><th class="left">Slot</th><th class="left">Player</th><th>Games</th>
+          <th>Off nights</th><th title="Nights he is in my lineup: every night set with as many slots filled as possible and the best players in them">Starts</th>
+          <th>Points</th><th>Value</th></tr></thead>
+        <tbody>${rows.join("")}</tbody></table>`
+      + (state.roster.length ? "" : `<p class="empty">No one yet. Mark my picks with + on the board.</p>`);
   }
 
   function bands() {
@@ -977,7 +1430,7 @@ footer b { color: var(--slate); font-weight: 600; }
     document.getElementById("slotline").textContent =
       `of ${DATA.nTeams}${DATA.snake ? ", snake" : ""} · ` +
       (mine ? `on the clock, then ${wait} picks` : `${wait} picks until my turn`) +
-      ` · round ${currentRound()}, score ${Math.round((1 - riskWeight()) * 100)}% floor`;
+      ` · round ${currentRound()}`;
 
     /* the grid */
     const rows = bands().map((b) => {
@@ -1046,15 +1499,18 @@ footer b { color: var(--slate); font-weight: 600; }
       const who = (namesAt[pos] || []).map((n) => n.split(" ").slice(1).join(" ") || n).join(", ");
       const urgent = need[pos] > 0 && !(pos === "G" && gBlock) && c.cost !== null &&
         c.cost >= (DATA.urgent ?? 20);
-      // A cost of zero is a real answer, not a missing one: the player I would
-      // get at this position is the same now as in twenty-six picks. Rendering
-      // it as "+0" reads like a rounding artefact, so say nothing is lost.
+      // A cost that rounds to zero is a real answer, not a missing one: the room
+      // is not expected to take anyone better here before my next turn.
+      // Rendering it as "+0" reads like a rounding artefact, so say nothing is
+      // lost.
       const shown = c.cost === null ? "—" : Math.round(c.cost) <= 0 ? "0" : signed(-c.cost);
+      const odds = c.p === null ? "" : ` title="The best ${pos} now is still there at my next turn in ${
+        Math.round(c.p * 100)}% of simulated rooms"`;
       return `<li class="${need[pos] ? "" : "full"} ${urgent ? "urgent" : ""}">
         <span class="pos">${pos}</span>
         <span class="pips">${pips}</span>
         <span class="who">${who || "&mdash;"}</span>
-        <span class="cost"><b>${shown}</b>value if I wait</span>
+        <span class="cost"${odds}><b>${shown}</b>value if I wait</span>
       </li>`;
     }).join("")
       + (lineup.bench.length
@@ -1074,10 +1530,10 @@ footer b { color: var(--slate); font-weight: 600; }
     const held = positions.filter((p) => need[p] > 0 && blocked(p));
     const heldNote = held.length ? ` <span class="held">(${held.join(", ")}: ${gBlock}.)</span>` : "";
     const bestAt = (pos) => P.filter((p) => !state.gone.has(p.i) && eligible(p).includes(pos))
-      .sort((a, b) => b.rs - a.rs)[0];
+      .sort((a, b) => b.vorp - a.vorp)[0];
     const top = P.filter((p) => !state.gone.has(p.i) && !(eligible(p).includes("G") && gBlock))
-      .sort((a, b) => b.rs - a.rs)[0];
-    const topLine = top ? ` Top score left: <b>${top.n}</b>.` : "";
+      .sort((a, b) => b.vorp - a.vorp)[0];
+    const topLine = top ? ` Top value left: <b>${top.n}</b>.` : "";
     const el = document.getElementById("verdict");
     const fillsNeed = (p) => eligible(p).some((pos) => need[pos] > 0);
     const pressLine = press.slotsOpen
@@ -1090,7 +1546,7 @@ footer b { color: var(--slate); font-weight: 600; }
     if (press.margin === null) {
       const filler = P.filter((p) => !state.gone.has(p.i) && fillsNeed(p)
                                      && !(eligible(p).includes("G") && gBlock))
-                      .sort((a, b) => b.rs - a.rs)[0];
+                      .sort((a, b) => b.vorp - a.vorp)[0];
       if (filler) {
         el.innerHTML = `<b>Take <span class="take">${filler.n}</span> (${
           eligible(filler).filter((pos) => need[pos] > 0).join("/")}).</b>
@@ -1099,10 +1555,14 @@ footer b { color: var(--slate); font-weight: 600; }
       }
     }
     if (!open.length) {
-      el.innerHTML = (held.length
-        ? `<b>Take the best score.</b> The open slots are blocked by a rule for now.`
+      const unpriced = positions.some((p) => need[p] > 0 && !blocked(p));
+      el.innerHTML = (unpriced
+        ? `<b>Take the best value.</b> This page carries no room model, so it cannot say
+           what waiting on the open slots costs.`
+        : held.length
+        ? `<b>Take the best value.</b> The open slots are blocked by a rule for now.`
         : `<b>Every starting slot is filled.</b> From here the bench is positionless,
-           so take the best score left on the board.`) + topLine + heldNote;
+           so take the best value left on the board.`) + topLine + heldNote;
     } else {
       const ranked = [...open].sort((a, b) => cost[b].cost - cost[a].cost);
       const first = ranked[0], second = ranked[1];
@@ -1111,7 +1571,7 @@ footer b { color: var(--slate); font-weight: 600; }
         el.innerHTML = `<b>No clear call.</b> Passing on <span class="take">${first}</span> costs about
            ${fmt0(cost[first].cost)} points of value${second
              ? ` and <span class="take">${second}</span> about ${fmt0(runnerUp)}` : ""} —
-           not enough to reach. Take the best score.` + topLine + heldNote;
+           not enough to reach. Take the best value.` + topLine + heldNote;
       } else {
         const pick = bestAt(first);
         el.innerHTML = `<b>Take a <span class="take">${first}</span>${pick ? `: ${pick.n}` : ""}.</b>
@@ -1358,6 +1818,9 @@ footer b { color: var(--slate); font-weight: 600; }
       <div class="whosub">${p.a == null ? "" : p.a + " years old · "}${
         fmt0(p.g)} ${isGoalie(p) ? "starts" : "of " + DATA.gamesInSeason + " games"} expected ·
         value ${signed(p.vorp)} over replacement</div>
+      ${DATA.swing && p.sw ? `<div class="whosub">${swingText(p)}: ${
+        p.sw.j >= 0 ? "+" : "−"}${Math.round(Math.abs(p.sw.j) * 100)}%.${
+        p.sw.f ? " " + DATA.swing.note[p.sw.f] : ""}</div>` : ""}
       <svg class="dist" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
         ${bars}
         <line x1="${mx.toFixed(1)}" y1="0" x2="${mx.toFixed(1)}" y2="${H}" stroke="var(--ink)" stroke-width="1.5"
@@ -1415,12 +1878,16 @@ footer b { color: var(--slate); font-weight: 600; }
   function render() {
     recompute();
     retier();
+    setPercentile();
+    scheduleFit();
     drawRows();
     drawStrip();
     drawShape();
     drawCompare();
     drawDetail();
     drawMyList();
+    drawRoster();
+    showView();
   }
 
   /* ---------- events ---------- */
@@ -1501,6 +1968,40 @@ footer b { color: var(--slate); font-weight: 600; }
     drawShape();
   });
 
+  // The rounds this draft runs. The deadline is counted against it.
+  document.getElementById("draftrounds").addEventListener("input", (e) => {
+    const n = Number(e.target.value);
+    if (!Number.isFinite(n) || n < 1 || n > 30) return;
+    state.rounds = Math.round(n);
+    save();
+    render();
+  });
+
+  document.querySelector(".tabs").addEventListener("click", (e) => {
+    const tab = e.target.closest("[role='tab']");
+    if (!tab) return;
+    state.view = tab.dataset.view;
+    save();
+    drawRoster();
+    showView();
+  });
+
+  document.getElementById("offmax").addEventListener("input", (e) => {
+    const n = Number(e.target.value);
+    if (!Number.isFinite(n) || n < 1 || n > 16) return;
+    state.offMax = Math.round(n);
+    save();
+    render();
+  });
+
+  // A roster row opens the player in the rail, as a board row does.
+  document.getElementById("rosterview").addEventListener("click", (e) => {
+    const tr = e.target.closest("tr[data-i]");
+    if (!tr) return;
+    state.selected = Number(tr.dataset.i);
+    drawDetail();
+  });
+
   document.getElementById("sortby").addEventListener("click", (e) => {
     const b = e.target.closest("button");
     if (!b) return;
@@ -1512,17 +2013,42 @@ footer b { color: var(--slate); font-weight: 600; }
     if (th) setSort(th.dataset.sort);
   });
 
-  function setSort(key) {
-    if (state.sort === key) state.asc = !state.asc;
-    else { state.sort = key; state.asc = false; }
+  // Mark the active sort in the bar and the table header.
+  function syncSort() {
     document.querySelectorAll("#sortby button").forEach((b) =>
       b.setAttribute("aria-pressed", String(b.dataset.sort === state.sort)));
+    document.getElementById("pctseg").classList.toggle("on", state.sort === "pq");
     document.querySelectorAll("thead th[data-sort]").forEach((th) => {
       if (th.dataset.sort === state.sort) th.setAttribute("aria-sort", state.asc ? "ascending" : "descending");
       else th.removeAttribute("aria-sort");
     });
+  }
+
+  function setSort(key) {
+    if (state.sort === key) state.asc = !state.asc;
+    else { state.sort = key; state.asc = false; }
+    syncSort();
+    save();
     drawRows();
   }
+
+  // Typing a percentile sorts by it; clicking the word does too, without
+  // retyping the number.
+  const pctin = document.getElementById("pctin");
+  pctin.addEventListener("input", (e) => {
+    const n = Number(e.target.value);
+    if (!Number.isFinite(n) || n < 1 || n > 99) return;
+    state.pct = Math.round(n);
+    setPercentile();
+    if (state.sort !== "pq") { state.sort = "pq"; state.asc = false; }
+    syncSort();
+    save();
+    drawRows();
+  });
+  document.getElementById("pctseg").addEventListener("click", (e) => {
+    if (e.target === pctin) return;
+    setSort("pq");
+  });
 
   document.getElementById("q").addEventListener("input", (e) => {
     state.q = e.target.value;
@@ -1552,8 +2078,11 @@ footer b { color: var(--slate); font-weight: 600; }
   }
 
   const pf = document.getElementById("posfilter");
-  pf.innerHTML = ["ALL", ...POSITIONS].map((p) =>
-    `<button data-pos="${p}" aria-pressed="${p === "ALL"}">${p === "ALL" ? "All" : p}</button>`).join("");
+  // "Skaters" is everyone but the goalies, for the stretch of a draft where no
+  // goalie is being considered and they only crowd the list.
+  const FILTER_LABELS = { ALL: "All", SK: "Skaters" };
+  pf.innerHTML = ["ALL", "SK", ...POSITIONS].map((p) =>
+    `<button data-pos="${p}" aria-pressed="${p === "ALL"}">${FILTER_LABELS[p] || p}</button>`).join("");
   pf.addEventListener("click", (e) => {
     const b = e.target.closest("button");
     if (!b) return;
@@ -1565,11 +2094,11 @@ footer b { color: var(--slate); font-weight: 600; }
   /* ---------- export ---------- */
   document.getElementById("export").addEventListener("click", async () => {
     const header =
-      "rank,player,eligible,slot,team,age,points,floor,p20,p80,ceiling,value,score,expected_games";
+      "rank,player,eligible,slot,team,age,points,floor,p20,p80,ceiling,value,expected_games";
     const lines = state.mine.map((i, n) => {
       const p = P[i];
       return [n + 1, `"${p.n}"`, `"${eligible(p).join("/")}"`, p.slot, p.t, p.a ?? "", fmt0(p.m), fmt0(p.f), fmt0(p.l),
-              fmt0(p.h), fmt0(p.c), Math.round(p.vorp), Math.round(p.rs), fmt0(p.g)].join(",");
+              fmt0(p.h), fmt0(p.c), Math.round(p.vorp), fmt0(p.g)].join(",");
     });
     const csv = [header, ...lines].join("\n");
     const downloads = await useCap("downloads");
@@ -1591,7 +2120,9 @@ footer b { color: var(--slate); font-weight: 600; }
   function save() {
     const payload = {
       gone: [...state.gone], mine: state.mine, order: state.order, roster: state.roster,
-      compare: state.compare, shapeMode: state.shapeMode, slot: state.slot, at: Date.now(),
+      compare: state.compare, shapeMode: state.shapeMode, slot: state.slot,
+      rounds: state.rounds, view: state.view, offMax: state.offMax,
+      sort: state.sort, asc: state.asc, pct: state.pct, at: Date.now(),
     };
     try { localStorage.setItem("bluelinedraft", JSON.stringify(payload)); } catch {}
     if (!store) return;
@@ -1617,12 +2148,24 @@ footer b { color: var(--slate); font-weight: 600; }
     if (payload.shapeMode === "tier" || payload.shapeMode === "vorp") state.shapeMode = payload.shapeMode;
     state.compare = (payload.compare || []).filter((i) => P[i]).slice(0, MAX_COMPARE);
     if (Number.isFinite(payload.slot)) state.slot = payload.slot;
+    if (Number.isFinite(payload.rounds)) state.rounds = payload.rounds;
+    if (payload.view === "board" || payload.view === "roster") state.view = payload.view;
+    if (Number.isFinite(payload.offMax)) state.offMax = payload.offMax;
+    if (Number.isFinite(payload.pct) && payload.pct >= 1 && payload.pct <= 99) state.pct = payload.pct;
+    // Only a sort this page still offers; a board saved with the old Score
+    // falls back to Value.
+    if (SORTS.has(payload.sort)) { state.sort = payload.sort; state.asc = !!payload.asc; }
     document.getElementById("draftslot").value = state.slot;
+    document.getElementById("draftrounds").value = draftRounds();
     document.querySelectorAll("#shapemode button").forEach((x) =>
       x.setAttribute("aria-pressed", String(x.dataset.mode === state.shapeMode)));
   }
 
   try { adopt(JSON.parse(localStorage.getItem("bluelinedraft"))); } catch {}
+  document.getElementById("draftrounds").value = draftRounds();
+  document.getElementById("offmax").value = state.offMax;
+  pctin.value = state.pct;
+  syncSort();
 
   document.getElementById("footnote").innerHTML = DATA.footnote;
   document.getElementById("kicker").textContent = DATA.kicker;

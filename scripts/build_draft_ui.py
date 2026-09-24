@@ -19,8 +19,10 @@ import numpy as np
 import pandas as pd
 
 from hockey.export import replacement_slots
+from hockey.export.form import SWING
 from hockey.seasons import PROJECTION_SEASON, SEASON_LENGTH, season_label
 from hockey.serve.recommend import DEFAULT_RULES, NO_CLEAR_CALL, URGENT
+from hockey.serve.room import SIMS, RoomModel
 from hockey.yahoo.eligibility import load_csv as load_eligibility
 from hockey.yahoo.settings import load_roster_from_yaml, load_scoring_from_yaml
 
@@ -34,6 +36,25 @@ N_TEAMS = 14
 # slot is to either end.
 DRAFT_SLOT = 8
 SNAKE = True
+
+# What the held-out seasons say happened after a swing, for the model this board
+# is fitted with, measured with the flag's own definition (hockey.export.form).
+# Measured 2026-09-24 over 2023-24 to 2025-26, 238 skaters: the model
+# over-projected players coming off a steady season by 0.24 fantasy points a
+# game, and after a swing by this. Re-measure when the model changes.
+SWING_NOTES = {
+    "hot": (
+        "After a jump like this the model has over-projected the next season by 0.48 "
+        "points a game, against 0.24 after a steady one (three held-out seasons, 60 "
+        "players): 0.39 for players under 30 and 0.68 for 30 and over. Read his "
+        "projection as high."
+    ),
+    "cold": (
+        "After a dip like this the model's projection has held up: it over-projected by "
+        "0.13 points a game, against 0.24 after a steady season (three held-out seasons, "
+        "45 players). It expects part of the dip back, and part came back."
+    ),
+}
 
 # Enough draws for a head-to-head probability to be stable to about a point,
 # and small enough that the packed array stays under a megabyte.
@@ -137,6 +158,58 @@ def main() -> None:
     if not eligibility:
         print("warning: no eligibility file; the page will use NHL primary positions")
 
+    # The room model the API prices waiting with, so the page prices it the same
+    # way. Without one the page says it cannot, rather than falling back to a room
+    # that drafts down this board - the assumption that was measured wrong.
+    room_file = Path(f"config/room_{PROJECTION_SEASON // 10000}.json")
+    room = RoomModel.load(room_file) if room_file.exists() else None
+    if room is None:
+        print(f"warning: no {room_file}; the page will show no cost of waiting")
+
+    # The season's schedule, so the page can say how many of a player's games he
+    # would actually start for me. Days are sent once and teams as indices into
+    # them: 2,688 team-games in a few kilobytes.
+    calendar = None
+    off_night_max = None
+    schedule_file = out / "schedule.csv"
+    if schedule_file.exists():
+        games = pd.read_csv(schedule_file)
+        days = sorted(games["date"].unique())
+        at = {d: k for k, d in enumerate(days)}
+        calendar = {
+            "days": days,
+            "teams": {
+                str(team): sorted(at[d] for d in group["date"])
+                for team, group in games.groupby("team")
+            },
+        }
+        # An off night has fewer than half the league's teams playing: with 32
+        # teams, fewer than 16, which is 7 games or fewer. The page can move it.
+        off_night_max = (len(calendar["teams"]) // 2 - 1) // 2
+    else:
+        print(f"warning: no {schedule_file}; the page will show no schedule fit")
+
+    # Last season against the two before it, from the export. Only skaters with
+    # three full seasons have a row; the page flags the big swings and shows the
+    # comparison for the rest.
+    swing = {}
+    swing_season = None
+    form_file = out / "form.csv"
+    if form_file.exists():
+        form = pd.read_csv(form_file)
+        swing_season = int(form["season"].iloc[0]) if len(form) else None
+        for r in form.itertuples():
+            swing[int(r.player_id)] = {
+                "f": r.flag if isinstance(r.flag, str) else "",
+                "j": round(float(r.swing), 3),
+                "l": round(float(r.per_game), 2),
+                "b": round(float(r.before_per_game), 2),
+                "gp": int(r.games),
+                "bgp": int(r.before_games),
+            }
+    else:
+        print(f"warning: no {form_file}; the page will show no hot or cold seasons")
+
     # Goalies reach this file already merged into value_board.csv by the export,
     # so they are ranked and tiered; what they still need is their draws. They
     # come from a separate fit and a separate file, and because the board is
@@ -223,6 +296,12 @@ def main() -> None:
                 "h": round(float(row.p80), 1),
                 "c": round(float(row.ceiling), 1),
                 "g": round(float(row.exp_games), 1),
+                # Where the room usually takes him (average pick over saved mock
+                # drafts), or null for a player it never has.
+                "o": None if room is None else room.adp.get(pid),
+                # Last season against the two before, or null without three
+                # full seasons (and always for a goalie).
+                "sw": None if goalie else swing.get(pid),
                 "cat": (
                     None
                     if goalie
@@ -277,6 +356,24 @@ def main() -> None:
         "rules": DEFAULT_RULES,
         "noClearCall": NO_CLEAR_CALL,
         "urgent": URGENT,
+        "calendar": calendar,
+        "offNightMax": off_night_max,
+        "swing": None
+        if swing_season is None
+        else {"season": season_label(swing_season), "threshold": SWING, "note": SWING_NOTES},
+        "room": None
+        if room is None
+        else {
+            "orderWeight": room.order_weight,
+            "needWeight": room.need_weight,
+            "offBoard": room.off_board,
+            "blindOrderWeight": room.blind_order_weight,
+            "blindOffBoard": room.blind_off_board,
+            "undrafted": room.undrafted,
+            "sims": SIMS,
+            "source": room.source,
+            "fitted": room.fitted,
+        },
         "cats": list(ORDER),
         "catLabels": LABELS,
         "weights": weights,
@@ -310,13 +407,53 @@ def main() -> None:
             "Tiers are struck within a position, so a tier 4 "
             "defenceman and a tier 4 centre are not the same player; value bands are the "
             "comparable read, because replacement level is already per position. "
-            "<b>Score</b> is the order the draft bot picks in: a blend of the 20th and "
-            "80th percentiles, each above replacement, that leans on the cautious end "
-            "in the first round and on the upside by the last. Early misses cannot be "
-            "replaced and late ones cost a waiver claim. "
-            "<b>Value if I wait</b> assumes the next picks come off the top of the value "
-            "board - the room will not do exactly that, so read it as the direction and "
-            "rough size of the cost, not a forecast. "
+            "<b>Percentile</b> sorts by any point in a player's season: type 80 for the "
+            "upside, 30 for the downside, and the P column shows it, read off his posterior "
+            "draws. It is raw fantasy points, like Points, so across positions it favours "
+            "forwards and goalies; Value is the read that compares positions. "
+            + (
+                "<b>Value if I wait</b> is the expected drop in the best player left at a "
+                "position by my next turn, over simulated rooms that draft in the room's own "
+                f"order toward each team's open slots - {room.source}, fitted {room.fitted}. "
+                "It is the draft API's model, and a mock room is not this league. Hover it for "
+                "the chance the best player there now is still there. "
+                if room is not None
+                else "<b>Value if I wait</b> is not shown: this page was built without a room "
+                "model, and a room that drafts down this board was measured wrong. "
+            )
+            + (
+                "<b>Fits</b> counts the games a player would add to my lineup this season: "
+                "the nights his team plays and my lineup, as it stands, has room for him - an "
+                "open slot he fits, or one freed by moving a player of mine who is eligible "
+                "elsewhere. A better player on a full night only bumps one of mine, so that "
+                "night adds nothing; his quality is the other columns. With two centres on my "
+                "roster, a third one fits only their nights off. It moves as my roster fills, "
+                "which is when it matters: early on everyone fits every game. For a goalie it "
+                "counts his team's games, and he starts only some of them. "
+                f"<b>Off nights</b> are his team's games on nights with {off_night_max} games "
+                "or fewer, when fewer than "
+                "half the league's teams play and my lineup is likelier to have a slot open; "
+                "the box above the board moves the cutoff. <b>My roster</b> puts my players "
+                "in their slots, with the nights each one starts, and counts for each position "
+                "the nights its slots are filled. Every night's lineup is set the way a manager "
+                "sets it: as many slots filled as possible, the best players in them. "
+                if calendar is not None
+                else "This board was built without a schedule, so it cannot say how a player "
+                "fits my lineup. "
+            )
+            + (
+                f"<b>▲ and ▼</b> mark a skater whose last season was {SWING:.0%} or more above "
+                "or below the average of the two before it, in fantasy points a game, with 40 "
+                "games or more in each and the earlier seasons rescaled to last season's league "
+                "scoring, so a league that recorded fewer hits does not read as a cold "
+                "defenceman. They are not corrections: the projection is the model's, and the "
+                "marks show where it has measurably been wrong. On three held-out seasons it "
+                "over-projected players coming off a steady season by 0.24 points a game, "
+                "a jump by 0.48 (0.68 for players 30 and over) and a dip by 0.13, because it "
+                "expects part of a dip back and part came back. Hover a mark for his numbers. "
+                if swing
+                else ""
+            )
             + (
                 "<b>Goalies</b> come from a separate model and a separate fit, so their "
                 "draws are independent of the skaters' - which is exactly what makes "

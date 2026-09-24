@@ -266,3 +266,124 @@ config, and filled to a multiple of the slots the league drafts at each
 position. Stage one's sample is balanced the same way, because it estimates the
 per-position baselines and was previously fitted on whichever few defencemen
 scored like forwards.
+
+## The room drafts in its own order, and the cost of waiting is simulated
+
+`cost_of_waiting` answers one question at each of my turns: if I pass on a
+position now, what is the best player there worth when my turn comes back? The
+answer is entirely about what the other managers take in between, and the first
+version assumed they draft straight down our value board. They cannot - they
+have never seen it.
+
+Measured on the saved Yahoo mock rooms (1,923 picks by other managers):
+
+- From round 4 on the median room pick was the 20th-35th best player left on
+  our board, and within a position the room took our best player there only
+  6-16% of the time.
+- 84-100% of room picks through round 12 filled an open starting slot for the
+  team picking. About one pick in seven was a player not on our board at all.
+- A player's average pick over the other rooms predicts the next room pick far
+  better than our value: held out one room at a time, 3.15 nats per pick on the
+  log of the average pick, against 4.28 for our value. Given the average pick,
+  our value adds nothing.
+
+So the straight run priced waiting on C, LW, RW and G 25-50 points too high on
+every turn, and read defence as free for thirteen rounds of one mock because no
+defenceman sat in the top dozen of our board. Replacing it with the brief's
+suggestion - each team takes our best player at a position it still needs -
+made defence worse, not better: the room does fill its slots, but not with our
+best player.
+
+`hockey.serve.room` models the room as it measured. Each pick is a multinomial
+logit over the players left: the log of the player's average pick, whether he
+fills an open starting slot for the team picking (read off the observed draft
+order, and only after that order is checked against my own picks), and a
+constant for somebody off our board. The costs are expectations over 500
+simulated rooms, scored in our value. Out of sample, on the bot's own turns, the
+bias is under 2 points at every position, where the straight run's was -25 to
+-51 at four of five.
+
+The order comes from mock rooms, which run Yahoo's standard settings, not this
+league's. That is the known weakness. It is still the room's own behaviour
+rather than a board none of the other managers can see, and rebuilding it is one
+command once more mocks are saved.
+
+The draft page has no server behind it, so it carries the same simulation in
+JavaScript. That is a second implementation of the kind this project keeps
+having to undo, so the page keeps it between markers and `tests/test_room.py`
+runs that block under Node against the Python on the same room: same expected
+best-after, same survival odds, to within a few thousand simulated rooms' noise.
+When the rosters cannot be read - the page often cannot, because a pick of
+somebody off the board cannot be marked - both use coefficients fitted without
+the need term rather than switching the term off.
+
+## The draft page counts starts, not games, against my roster
+
+Late in a draft the board's value barely separates players, and what does is
+the schedule: a fourth centre whose team plays the nights my centres already
+cover adds nothing, and one who plays their nights off adds a start each time.
+So the page's board carries **Fits** - the games a player would *add* to my
+lineup this season - and **Off nights**, his team's games on nights when fewer
+than half the league plays (7 games or fewer, adjustable). The roster tab shows
+the nights each of my players starts, and for each position the slot-nights my
+lineup fills.
+
+Fits counts added games, not starts, and the difference was found in use: with
+two centres drafted, a third one better than both "fit" all 84 of his games,
+because best-first he starts every night - but on a night all three play he
+only bumps one of mine, and my lineup is no bigger. Fits now counts the nights
+my lineup has room for him (`schedule.added_games`), which is the number that
+says a third centre is a poor schedule pick; his quality is the other columns.
+
+Every night's lineup is set the way a manager sets it (`schedule.lineup`): as
+many slots filled as possible, the best players in them, moving a dual-eligible
+starter when that frees a slot. The league's roster rule, best first into the
+slot with the most room, can leave a slot empty for a night - a C/LW takes the
+wing and the pure winger behind him sits with centre open - and no manager does
+that. `marginal_starts` uses the same lineup, so the API and the page agree; the
+page's copy sits between markers and `tests/test_schedule.py` runs it under Node
+against the Python on random rosters, with the lineup itself held to a brute
+force. A goalie is counted on his team's games, which overstates him: he starts
+only some of them, and the page marks his number as approximate rather than
+invent a model of which nights those are.
+
+## Hot and cold seasons are marked, not corrected
+
+The projection is least reliable after a player's last season jumped. Over
+three held-out seasons (2023-24 to 2025-26, 80 skaters each, fitted the way the
+board is fitted), the model over-projected players coming off a steady season
+by 0.24 fantasy points a game, and players coming off a season 12% or more
+above their two before by 0.48 - 0.39 under 30, 0.68 at 30 and over. It carries
+most of a hot season forward: Robertson went 5.85 to 7.96 a game in 2022-23,
+was projected at 7.98 and scored 5.99. After a season 12% or more below, it
+over-projected by 0.13, less than for a steady one: it expects part of a dip
+back, and part came back.
+
+So `hockey.export.form` writes `form.csv` beside the calendar - last season's
+fantasy points a game against the average of the two before, each with 40 games
+or more - and the page marks the swings of 12% or more with ▲ and ▼ and the
+evidence above. 12% is the upper quartile of year-over-year changes, not a
+cliff: the over-projection grows with the jump. The earlier seasons are
+rescaled to last season's league rates, category by category, because 2025-26
+recorded 10% fewer hits and blocks a game than 2023-24, and unadjusted a third
+of the board read as cold for what the league recorded rather than what they
+did.
+
+The marks do not touch a projection. What was tried in the model instead, on
+the same three held-out seasons (mean CRPS 48.6, mean miss 0.693 points a game
+for the current model; a leakage-free blend of the last three seasons misses by
+0.678, so the model is not far off):
+
+| Change | CRPS | Miss | Why it was not kept |
+|---|---|---|---|
+| Walk centred on each player's seasons | 47.8 vs 45.9, 2025-26 only | - | lifted every projection; depth over-projection doubled |
+| One-season shock on the form factor | 50.4 | 0.699 | fixes hot seasons, predicts rebounds that did not come |
+| One-season shock per category | 48.4 | 0.685 | within noise, 7 divergences, hot seasons unchanged |
+| Aging scale held at 1 | 47.9 | 0.670 | better at 26-32, worse at both ends: over-projects 25 and under (0.25 vs 0.12) and under-projects 33 and over |
+| Shock plus aging held at 1 | 49.1 | 0.662 | best mean and hot seasons fixed (0.17), intervals too wide (50% range held 56%) |
+
+The aging scale is the open question. Stage one estimates it on the top ten
+players at each position, and players still at the top in their thirties are
+the ones who did not decline, so it came out anywhere from 0.10 to 0.78 across
+the three folds. Held at 1 it overcorrects at 33 and over, where the current
+model's error (0.18 over) and the fixed one's (0.15 under) straddle the truth.

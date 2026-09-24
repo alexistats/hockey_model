@@ -216,7 +216,7 @@ def main() -> None:
     # consumer checks, and a board that cannot answer a schedule question should
     # say so rather than answer it with zeros.
     if write_draft_context(out):
-        print(f"wrote {out}/schedule.csv, weeks.csv and injuries.csv")
+        print(f"wrote {out}/schedule.csv, weeks.csv, injuries.csv and form.csv")
 
 
 if __name__ == "__main__":

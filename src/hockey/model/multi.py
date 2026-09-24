@@ -83,9 +83,11 @@ def model_structure(include_opponent: bool, include_idio=False) -> tuple[str, ..
     terms = ["position_means", "form_factor", "aging", "availability", "home"]
     if include_opponent:
         terms.append("opponent")
-    cats = (
-        include_idio if isinstance(include_idio, tuple) else _idio_categories(include_idio, STATS)
-    )
+    # Normalised to the model's own order. Stage one is handed the categories as
+    # the caller typed them and stage two as `build` orders them, so a fingerprint
+    # of the raw tuple made ("hits", "assists") and ("assists", "hits") two
+    # different models and refused a stage one it had just fitted.
+    cats = _idio_categories(include_idio, STATS)
     if cats:
         terms.append("idio_walks:" + ",".join(cats))
     return tuple(terms)
