@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 from hockey.export import replacement_slots
+from hockey.export.form import SWING
 from hockey.seasons import PROJECTION_SEASON, SEASON_LENGTH, season_label
 from hockey.serve.recommend import DEFAULT_RULES, NO_CLEAR_CALL, URGENT
 from hockey.serve.room import SIMS, RoomModel
@@ -35,6 +36,25 @@ N_TEAMS = 14
 # slot is to either end.
 DRAFT_SLOT = 8
 SNAKE = True
+
+# What the held-out seasons say happened after a swing, for the model this board
+# is fitted with, measured with the flag's own definition (hockey.export.form).
+# Measured 2026-09-24 over 2023-24 to 2025-26, 238 skaters: the model
+# over-projected players coming off a steady season by 0.24 fantasy points a
+# game, and after a swing by this. Re-measure when the model changes.
+SWING_NOTES = {
+    "hot": (
+        "After a jump like this the model has over-projected the next season by 0.48 "
+        "points a game, against 0.24 after a steady one (three held-out seasons, 60 "
+        "players): 0.39 for players under 30 and 0.68 for 30 and over. Read his "
+        "projection as high."
+    ),
+    "cold": (
+        "After a dip like this the model's projection has held up: it over-projected by "
+        "0.13 points a game, against 0.24 after a steady season (three held-out seasons, "
+        "45 players). It expects part of the dip back, and part came back."
+    ),
+}
 
 # Enough draws for a head-to-head probability to be stable to about a point,
 # and small enough that the packed array stays under a megabyte.
@@ -169,6 +189,27 @@ def main() -> None:
     else:
         print(f"warning: no {schedule_file}; the page will show no schedule fit")
 
+    # Last season against the two before it, from the export. Only skaters with
+    # three full seasons have a row; the page flags the big swings and shows the
+    # comparison for the rest.
+    swing = {}
+    swing_season = None
+    form_file = out / "form.csv"
+    if form_file.exists():
+        form = pd.read_csv(form_file)
+        swing_season = int(form["season"].iloc[0]) if len(form) else None
+        for r in form.itertuples():
+            swing[int(r.player_id)] = {
+                "f": r.flag if isinstance(r.flag, str) else "",
+                "j": round(float(r.swing), 3),
+                "l": round(float(r.per_game), 2),
+                "b": round(float(r.before_per_game), 2),
+                "gp": int(r.games),
+                "bgp": int(r.before_games),
+            }
+    else:
+        print(f"warning: no {form_file}; the page will show no hot or cold seasons")
+
     # Goalies reach this file already merged into value_board.csv by the export,
     # so they are ranked and tiered; what they still need is their draws. They
     # come from a separate fit and a separate file, and because the board is
@@ -258,6 +299,9 @@ def main() -> None:
                 # Where the room usually takes him (average pick over saved mock
                 # drafts), or null for a player it never has.
                 "o": None if room is None else room.adp.get(pid),
+                # Last season against the two before, or null without three
+                # full seasons (and always for a goalie).
+                "sw": None if goalie else swing.get(pid),
                 "cat": (
                     None
                     if goalie
@@ -314,6 +358,9 @@ def main() -> None:
         "urgent": URGENT,
         "calendar": calendar,
         "offNightMax": off_night_max,
+        "swing": None
+        if swing_season is None
+        else {"season": season_label(swing_season), "threshold": SWING, "note": SWING_NOTES},
         "room": None
         if room is None
         else {
@@ -393,6 +440,19 @@ def main() -> None:
                 if calendar is not None
                 else "This board was built without a schedule, so it cannot say how a player "
                 "fits my lineup. "
+            )
+            + (
+                f"<b>▲ and ▼</b> mark a skater whose last season was {SWING:.0%} or more above "
+                "or below the average of the two before it, in fantasy points a game, with 40 "
+                "games or more in each and the earlier seasons rescaled to last season's league "
+                "scoring, so a league that recorded fewer hits does not read as a cold "
+                "defenceman. They are not corrections: the projection is the model's, and the "
+                "marks show where it has measurably been wrong. On three held-out seasons it "
+                "over-projected players coming off a steady season by 0.24 points a game, "
+                "a jump by 0.48 (0.68 for players 30 and over) and a dip by 0.13, because it "
+                "expects part of a dip back and part came back. Hover a mark for his numbers. "
+                if swing
+                else ""
             )
             + (
                 "<b>Goalies</b> come from a separate model and a separate fit, so their "

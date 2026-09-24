@@ -31,6 +31,7 @@ goalies GS 1, W 6, GA −1.5, SV 0.3, SHO 4.
 | `scarcity.csv` | Drop-off curve: projected points by rank within position |
 | `draws_batch_*.npz` | The posterior itself — `draws` (fantasy totals), `games_played`, `stat_<category>`, all `(n_draws, n_players)` |
 | `diagnostics.csv` | Per-batch r-hat, ESS, divergences |
+| `form.csv` | Per skater with 40+ games in each of the last three seasons: last season's fantasy points a game (`per_game`), the average of the two before (`before_per_game`, rescaled to last season's league scoring), `swing`, and `flag` (`hot` / `cold` at ±12%). Warehouse facts, not model output |
 | `config/eligibility_2026.csv` | Yahoo position eligibility, `nhl_id → positions` |
 
 Goalies come from their own board directory (`artifacts/goalies_v2`):
@@ -273,6 +274,17 @@ absence from the board is not evidence a player is bad.
   projection for the wrong player and nothing downstream can detect it. Record
   the miss. This has already bitten once: Vancouver had two Elias Petterssons,
   a centre and a defenceman.
+
+### 13. The projection carries most of a hot season forward
+
+Measured on three held-out seasons (2023-24 to 2025-26): after a steady season
+the model over-projected the next one by 0.24 fantasy points a game; after a
+season 12% or more above the two before (`form.csv` flag `hot`), by 0.48 -
+0.39 under 30, 0.68 at 30 and over. After a `cold` season, by 0.13: it expects
+part of a dip back, and part came back. Five model changes were tested against
+this and none was kept (`docs/architecture.md`, "Hot and cold seasons are
+marked, not corrected"), so treat a `hot` player's projection as high rather
+than adjusting the posterior.
 
 ---
 

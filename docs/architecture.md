@@ -346,3 +346,44 @@ against the Python on random rosters, with the lineup itself held to a brute
 force. A goalie is counted on his team's games, which overstates him: he starts
 only some of them, and the page marks his number as approximate rather than
 invent a model of which nights those are.
+
+## Hot and cold seasons are marked, not corrected
+
+The projection is least reliable after a player's last season jumped. Over
+three held-out seasons (2023-24 to 2025-26, 80 skaters each, fitted the way the
+board is fitted), the model over-projected players coming off a steady season
+by 0.24 fantasy points a game, and players coming off a season 12% or more
+above their two before by 0.48 - 0.39 under 30, 0.68 at 30 and over. It carries
+most of a hot season forward: Robertson went 5.85 to 7.96 a game in 2022-23,
+was projected at 7.98 and scored 5.99. After a season 12% or more below, it
+over-projected by 0.13, less than for a steady one: it expects part of a dip
+back, and part came back.
+
+So `hockey.export.form` writes `form.csv` beside the calendar - last season's
+fantasy points a game against the average of the two before, each with 40 games
+or more - and the page marks the swings of 12% or more with ▲ and ▼ and the
+evidence above. 12% is the upper quartile of year-over-year changes, not a
+cliff: the over-projection grows with the jump. The earlier seasons are
+rescaled to last season's league rates, category by category, because 2025-26
+recorded 10% fewer hits and blocks a game than 2023-24, and unadjusted a third
+of the board read as cold for what the league recorded rather than what they
+did.
+
+The marks do not touch a projection. What was tried in the model instead, on
+the same three held-out seasons (mean CRPS 48.6, mean miss 0.693 points a game
+for the current model; a leakage-free blend of the last three seasons misses by
+0.678, so the model is not far off):
+
+| Change | CRPS | Miss | Why it was not kept |
+|---|---|---|---|
+| Walk centred on each player's seasons | 47.8 vs 45.9, 2025-26 only | - | lifted every projection; depth over-projection doubled |
+| One-season shock on the form factor | 50.4 | 0.699 | fixes hot seasons, predicts rebounds that did not come |
+| One-season shock per category | 48.4 | 0.685 | within noise, 7 divergences, hot seasons unchanged |
+| Aging scale held at 1 | 47.9 | 0.670 | better at 26-32, worse at both ends: over-projects 25 and under (0.25 vs 0.12) and under-projects 33 and over |
+| Shock plus aging held at 1 | 49.1 | 0.662 | best mean and hot seasons fixed (0.17), intervals too wide (50% range held 56%) |
+
+The aging scale is the open question. Stage one estimates it on the top ten
+players at each position, and players still at the top in their thirties are
+the ones who did not decline, so it came out anywhere from 0.10 to 0.78 across
+the three folds. Held at 1 it overcorrects at 33 and over, where the current
+model's error (0.18 over) and the fixed one's (0.15 under) straddle the truth.
