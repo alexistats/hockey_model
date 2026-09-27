@@ -229,3 +229,57 @@ def week_window(weeks: list[dict], first: int, count: int) -> tuple[date, date] 
         min(date.fromisoformat(str(w["start"])) for w in wanted),
         max(date.fromisoformat(str(w["end"])) for w in wanted),
     )
+
+
+def night_points(tonight: list[dict], shape: dict[str, int]) -> float:
+    """One night's expected lineup points, for the players on the ice tonight.
+
+    Each entry is {"id", "rate", "elig"} and, for a goalie, "share". A skater
+    plays every game his team does, and the skater slots are set as a manager
+    sets them (`lineup`) on per-game rates. A goalie starts only his share of
+    his team's games, so the goalie slots are an expectation over which of mine
+    start tonight: every combination of starters, weighted by its chance, with
+    the slots taking the best of those who start. A night rarely has more than
+    three of my goalies on it, so enumerating is cheap and exact.
+    """
+    skaters = [p for p in tonight if p.get("share") is None]
+    goalies = [p for p in tonight if p.get("share") is not None]
+    skater_shape = {s: n for s, n in shape.items() if s != "G"}
+    chosen = lineup([(p["id"], p["rate"], tuple(p["elig"])) for p in skaters], skater_shape)
+    rate = {p["id"]: p["rate"] for p in skaters}
+    points = sum(rate[i] for i in chosen)
+
+    slots = int(shape.get("G", 0))
+    if slots and goalies:
+        for mask in range(1 << len(goalies)):
+            chance, up = 1.0, []
+            for j, g in enumerate(goalies):
+                if mask >> j & 1:
+                    chance *= g["share"]
+                    up.append(g["rate"])
+                else:
+                    chance *= 1.0 - g["share"]
+            if chance:
+                points += chance * sum(sorted(up, reverse=True)[:slots])
+    return points
+
+
+def window_points(
+    entries: list[dict], calendar: dict[str, list], shape: dict[str, int], first, last
+) -> dict:
+    """Expected lineup points each night from `first` to `last`, inclusive.
+
+    Entries are {"id", "team", "rate", "elig"} plus "share" for a goalie and an
+    optional "from", the first night he can play - a return date from injury.
+    A roster's week is the sum of its nights, and what a move is worth is the
+    difference between two rosters' sums over the same nights: that is the
+    question a schedule tool that shows only games cannot answer, because a
+    player's games are not his starts and his starts are not all points gained.
+    """
+    plays = {t: set(days) for t, days in calendar.items()}
+    on: dict = {}
+    for e in entries:
+        for d in plays.get(e["team"], ()):
+            if first <= d <= last and (e.get("from") is None or d >= e["from"]):
+                on.setdefault(d, []).append(e)
+    return {d: night_points(tonight, shape) for d, tonight in sorted(on.items())}

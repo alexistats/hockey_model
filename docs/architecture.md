@@ -413,3 +413,36 @@ pick by the number the server gave it.
 The page's copy of the marking logic sits between markers, and
 `tests/test_follow.py` runs it under Node; the same file holds the server to
 the pick list it hands out.
+
+## In season, a move is priced in lineup points over the weeks ahead
+
+After the draft the page answers a different question: what would this add, or
+this drop, do to my lineup over the next few weeks. Schedule tools answer it in
+games, and games are the wrong unit twice over. A player's games are not his
+starts - on a night my slots are full he starts only by bumping someone - and
+his starts are not all gain, since the player he bumps was scoring too. So the
+Season tab prices every move in expected lineup points: each night in the
+window is set the way a manager sets it (`lineup`), on per-game rates, and a
+move is worth the difference between two rosters' totals over the same nights.
+That makes drop-and-add scenarios fall out for free - drop two, add one, and
+the free-agent list re-ranks by what each would add *after* the drops - which
+is the part existing optimizers leave out.
+
+Goalies need their own rule, because a goalie starts only his share of his
+team's games. The goalie slots are an expectation over which of mine start
+tonight: every combination, weighted by its chance, with the slots taking the
+best who start. A night rarely has more than three of my goalies on it, so the
+enumeration is exact and cheap, and it is what makes a third goalie worth
+something: he fills the nights one of the first two sits.
+
+Whose players are whose lives in a league file the server owns
+(`artifacts/season/league.json`, seeded by `python -m hockey.serve.season seed`
+from the draft results): ids only, with players the board does not know kept
+by name in `unresolved`, where the page lists them as not counted rather than
+guessing them onto a projection. The page reads it and writes recorded moves
+back; opened from disk, it falls back to its own draft marks. A Yahoo sync can
+later write the same file.
+
+`night_points` and `window_points` in `serve/schedule.py` are the reference;
+the page's copies sit in its schedule block and `tests/test_season.py` holds
+them together under Node on random rosters with goalies and injured players.

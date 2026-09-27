@@ -15,6 +15,7 @@ from pathlib import Path
 
 import uvicorn
 
+from hockey.serve import season as season_mod
 from hockey.serve.app import create_app
 
 
@@ -30,6 +31,11 @@ def main() -> None:
         default="artifacts/ui/draft_board.html",
         help="the built draft page, served at /ui so it can follow the draft",
     )
+    parser.add_argument(
+        "--league",
+        default=str(season_mod.DEFAULT_PATH),
+        help="the season's league file: my roster, everyone else's, who is out",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -39,6 +45,7 @@ def main() -> None:
         n_teams=args.teams,
         slot=args.slot,
         ui=Path(args.ui),
+        league=Path(args.league),
     )
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="info")
 

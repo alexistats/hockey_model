@@ -10,3 +10,6 @@ venv/
 .idea/
 artifacts/
 *.nc
+
+# League draft results name other managers; they stay on this machine.
+config/draft_*.csv

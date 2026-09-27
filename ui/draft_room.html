@@ -261,6 +261,33 @@ input[type="search"] { min-width: 210px; }
 .teamgrid button[aria-pressed="true"] { background: var(--line); border-color: var(--line); color: var(--on-accent); font-weight: 600; }
 .teamgrid button[aria-pressed="true"] .n { color: var(--on-accent); }
 
+/* ---- the season tab ---- */
+.season-view { padding: 14px 16px 16px; }
+.season-view[hidden] { display: none; }
+.sbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 12.5px; color: var(--slate); margin-bottom: 10px; }
+.sbar select { padding: 3px 6px; }
+.sbar .span { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+.sbar .src { margin-left: auto; font-size: 11px; color: var(--faint); }
+.scen { border: 1px solid var(--edge); border-radius: 6px; padding: 10px 12px; margin-bottom: 6px; background: var(--well); }
+.scen .moves { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; margin-bottom: 8px; }
+.chipx { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 10px; font: inherit; font-size: 11.5px;
+  border: 1px solid var(--edge); background: var(--surface); color: var(--ink); cursor: pointer; }
+.chipx.drop { border-color: var(--red); }
+.chipx.add { border-color: var(--line); }
+table.stable { width: auto; min-width: 380px; }
+table.stable td, table.stable th { padding: 3px 10px; font-family: var(--mono); font-size: 12px; text-align: right; }
+table.stable td.left, table.stable th.left { text-align: left; font-family: var(--sans); }
+table.stable tr.total td { border-top: 1px solid var(--edge); font-weight: 600; }
+.gain { color: var(--line); font-weight: 600; }
+.loss { color: var(--red); font-weight: 600; }
+.sbtns { display: flex; gap: 8px; margin-top: 8px; }
+.season-view h3 { font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--slate); margin: 16px 0 6px; }
+.mini { font: inherit; font-size: 11px; padding: 2px 7px; border: 1px solid var(--edge); border-radius: 4px;
+  background: var(--surface); color: var(--slate); cursor: pointer; }
+.mini[aria-pressed="true"] { background: var(--line); border-color: var(--line); color: var(--on-accent); }
+.mini.warn[aria-pressed="true"] { background: var(--red); border-color: var(--red); color: var(--on-accent); }
+table.rtable td.acts { white-space: nowrap; text-align: right; }
+
 /* ---- main grid ---- */
 .work { display: grid; grid-template-columns: minmax(0, 1fr) 350px; gap: 18px; align-items: start; }
 @media (max-width: 1080px) { .work { grid-template-columns: minmax(0, 1fr); } }
@@ -485,6 +512,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
         <input type="number" id="pctin" min="1" max="99" step="1" aria-label="Percentile to sort by"></label>
       <button data-sort="fit" aria-pressed="false" title="Games he would add to my lineup, against my roster as it stands">Fits</button>
       <button data-sort="off" aria-pressed="false" title="His team's games on off nights">Off nights</button>
+      <button data-sort="win" aria-pressed="false" title="Points a free agent would add to my lineup over the Season tab's look-ahead">Adds</button>
     </div>
     <button class="btn" id="hidegone" aria-pressed="false">Hide drafted</button>
     <button class="btn" id="follow" aria-pressed="false"
@@ -509,10 +537,13 @@ table.rtable tr.bench td.slot { color: var(--faint); }
       <div class="tabs" role="tablist" aria-label="What the board shows">
         <button role="tab" id="tab-board" data-view="board" aria-controls="boardview" aria-selected="true">Players</button>
         <button role="tab" id="tab-roster" data-view="roster" aria-controls="rosterview" aria-selected="false">My roster<span class="tabn" id="tab-roster-n">0</span></button>
+        <button role="tab" id="tab-season" data-view="season" aria-controls="seasonview" aria-selected="false"
+                title="My roster and the free agents over the next few weeks, and what adds and drops would do to my lineup">Season</button>
         <label class="waitset" title="Nights when fewer than half the league's teams play. My lineup has more open slots on those nights, so a player whose team plays them fits more often.">Off night: ≤
           <input type="number" id="offmax" min="1" max="16" step="1"> games</label>
       </div>
       <div class="roster-view" id="rosterview" role="tabpanel" aria-labelledby="tab-roster" hidden></div>
+      <div class="season-view" id="seasonview" role="tabpanel" aria-labelledby="tab-season" hidden></div>
       <div class="scroller" id="boardview" role="tabpanel" aria-labelledby="tab-board">
         <table>
           <thead>
@@ -654,6 +685,9 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     sort: "vorp", asc: false, pos: "ALL", q: "",
     // The team filter, and the fantasy week its game counts are for.
     teams: new Set(), teamWeek: null,
+    // The Season tab: weeks to look ahead, the moves being tried (board
+    // indices), and my players who are out - index -> return date or null.
+    season: { weeks: 1, drops: [], adds: [], out: {} },
     // The percentile the P column shows and sorts by.
     pct: 80,
     hideGone: false, selected: P[0] ? P[0].i : null,
@@ -679,7 +713,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
   const follow = { on: false, timer: null, extra: [], extraMine: [], sig: "", last: null };
 
   // The sorts the bar and the table header offer.
-  const SORTS = new Set(["vorp", "m", "pq", "fit", "off", "a"]);
+  const SORTS = new Set(["vorp", "m", "pq", "fit", "off", "a", "win"]);
 
   /* ---------- where my turns fall ---------- */
   // Overall pick number of my `r`-th round, counting rounds from 1. In a snake
@@ -1200,6 +1234,53 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     }
     return out;
   }
+
+  // One night's expected lineup points, for the players on the ice tonight:
+  // {id, rate, elig} and, for a goalie, `share`. Skaters play every game their
+  // team does and the skater slots are set as above on per-game rates. A goalie
+  // starts only his share of his team's games, so the goalie slots are an
+  // expectation over which of mine start: every combination, weighted by its
+  // chance, the slots taking the best who start. `night_points` in schedule.py.
+  function nightPoints(tonight, shape) {
+    const skShape = {};
+    for (const k of Object.keys(shape)) if (k !== "G") skShape[k] = shape[k];
+    const sk = tonight.filter((p) => p.share == null);
+    const night = nightLineup(sk.map((p) => ({ id: p.id, mean: p.rate, elig: p.elig })), skShape);
+    let points = 0;
+    for (const i of night.holder) if (i >= 0) points += sk[i].rate;
+    const slots = shape.G || 0;
+    const gs = tonight.filter((p) => p.share != null);
+    if (slots && gs.length) {
+      for (let mask = 0; mask < (1 << gs.length); mask++) {
+        let chance = 1;
+        const up = [];
+        gs.forEach((g, j) => {
+          if (mask & (1 << j)) { chance *= g.share; up.push(g.rate); } else chance *= 1 - g.share;
+        });
+        if (!chance) continue;
+        up.sort((a, b) => b - a);
+        points += chance * up.slice(0, slots).reduce((a, b) => a + b, 0);
+      }
+    }
+    return points;
+  }
+
+  // Expected lineup points each night from `first` to `last`: entries are
+  // {id, team, rate, elig, share?, from?}, `from` the first night he can play.
+  // `window_points` in schedule.py.
+  function windowPoints(entries, calendar, shape, first, last) {
+    const on = new Map();
+    for (const e of entries) {
+      for (const d of calendar[e.team] || []) {
+        if (d < first || d > last || (e.from != null && d < e.from)) continue;
+        if (!on.has(d)) on.set(d, []);
+        on.get(d).push(e);
+      }
+    }
+    const out = new Map();
+    for (const d of [...on.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) out.set(d, nightPoints(on.get(d), shape));
+    return out;
+  }
   /* schedule:end */
 
   /* room:begin
@@ -1423,11 +1504,11 @@ table.rtable tr.bench td.slot { color: var(--faint); }
   }
 
   function showView() {
-    const roster = state.view === "roster";
-    document.getElementById("boardview").hidden = roster;
-    document.getElementById("rosterview").hidden = !roster;
-    document.getElementById("tab-board").setAttribute("aria-selected", String(!roster));
-    document.getElementById("tab-roster").setAttribute("aria-selected", String(roster));
+    const views = { board: "boardview", roster: "rosterview", season: "seasonview" };
+    for (const [v, id] of Object.entries(views)) {
+      document.getElementById(id).hidden = state.view !== v;
+      document.getElementById(`tab-${v}`).setAttribute("aria-selected", String(state.view === v));
+    }
   }
 
   // My roster in its slots - starters by position, open slots named, then the
@@ -1984,6 +2065,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     retier();
     setPercentile();
     scheduleFit();
+    seasonNow = seasonScenario();
     drawRows();
     drawStrip();
     drawShape();
@@ -1991,6 +2073,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     drawDetail();
     drawMyList();
     drawRoster();
+    drawSeason();
     showView();
   }
 
@@ -2088,8 +2171,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     if (!tab) return;
     state.view = tab.dataset.view;
     save();
-    drawRoster();
-    showView();
+    render();
   });
 
   document.getElementById("offmax").addEventListener("input", (e) => {
@@ -2136,6 +2218,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     syncSort();
     save();
     drawRows();
+    drawSeason();
   }
 
   // Typing a percentile sorts by it; clicking the word does too, without
@@ -2150,6 +2233,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     syncSort();
     save();
     drawRows();
+    drawSeason();
   });
   document.getElementById("pctseg").addEventListener("click", (e) => {
     if (e.target === pctin) return;
@@ -2159,6 +2243,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
   document.getElementById("q").addEventListener("input", (e) => {
     state.q = e.target.value;
     drawRows();
+    drawSeason();
   });
 
   document.getElementById("hidegone").addEventListener("click", (e) => {
@@ -2166,6 +2251,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     e.target.setAttribute("aria-pressed", String(state.hideGone));
     e.target.classList.toggle("on", state.hideGone);
     drawRows();
+    drawSeason();
   });
 
   document.getElementById("reset").addEventListener("click", () => {
@@ -2384,6 +2470,278 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     save();
   });
 
+  /* ---------- the season: whose players are whose ---------- */
+  // Served by the draft server, the page reads the league file and writes it
+  // back as moves are recorded; opened as a file, it keeps them here, in the
+  // draft marks. The file holds ids only - `python -m hockey.serve.season`.
+  const ID_TO_I = new Map(P.map((p) => [p.id, p.i]));
+  const league = { source: "local", me: null, unresolved: [], updatedAt: null };
+
+  function adoptLeague(doc) {
+    const known = (ids) => (ids || []).map((id) => ID_TO_I.get(Number(id))).filter((i) => i != null);
+    const mine = known(doc.mine);
+    state.roster = mine;
+    state.gone = new Set([...known(doc.taken), ...mine]);
+    state.order = [];
+    state.season.out = {};
+    for (const [id, back] of Object.entries(doc.out || {})) {
+      const i = ID_TO_I.get(Number(id));
+      if (i != null) state.season.out[i] = back;
+    }
+    const held = new Set(mine);
+    state.season.drops = state.season.drops.filter((i) => held.has(i));
+    state.season.adds = state.season.adds.filter((i) => !state.gone.has(i));
+    Object.assign(league, { source: "server", me: doc.me || null, unresolved: doc.unresolved || [],
+                            updatedAt: doc.updated_at || null });
+  }
+
+  async function loadLeague() {
+    if (!CAN_FOLLOW) return;
+    try {
+      const r = await fetch("/season/league");
+      if (!r.ok) return;
+      adoptLeague(await r.json());
+      render();
+    } catch { /* no league file: the draft marks stand */ }
+  }
+
+  async function saveLeague() {
+    save();
+    if (league.source !== "server") return;
+    const mine = new Set(state.roster);
+    const body = {
+      mine: state.roster.map((i) => P[i].id),
+      taken: [...state.gone].filter((i) => !mine.has(i)).map((i) => P[i].id),
+      out: Object.fromEntries(Object.entries(state.season.out).map(([i, d]) => [P[i].id, d])),
+    };
+    try {
+      const r = await fetch("/season/league", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      if (!r.ok) { note(`The league file refused the change (${r.status})`); return; }
+      league.updatedAt = (await r.json()).updated_at;
+      note("Saved to the league file");
+      drawSeason();
+    } catch { note("League file unreachable: saved in this browser only"); }
+  }
+
+  const DAYS = DATA.calendar ? DATA.calendar.days : [];
+  const SEASON_GAMES = DATA.gamesInSeason || 82;
+  const dayLabel = (d) => new Date(`${DAYS[d]}T12:00:00`).toLocaleDateString(undefined,
+    { weekday: "short", month: "short", day: "numeric" });
+  const shortDate = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const signed1 = (x) => (x >= 0 ? "+" : "\u2212") + Math.abs(x).toFixed(1);
+  const tone = (x) => (x > 0.05 ? "gain" : x < -0.05 ? "loss" : "");
+
+  // The look-ahead: from today - or opening night, before it - to the end of the
+  // fantasy week `weeks - 1` after this one. Days are indices into DAYS.
+  function seasonWindow() {
+    if (!DAYS.length || !WEEKS.length) return null;
+    const now = new Date();
+    const today = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    const first = DAYS.findIndex((d) => d >= today);
+    if (first < 0) return null;
+    let k = WEEKS.findIndex((w) => w.end >= DAYS[first]);
+    if (k < 0) k = WEEKS.length - 1;
+    const weeks = WEEKS.slice(k, k + state.season.weeks);
+    const end = weeks[weeks.length - 1].end;
+    let last = first;
+    while (last + 1 < DAYS.length && DAYS[last + 1] <= end) last++;
+    return { first, last, weeks };
+  }
+
+  // A player as the lineup code takes him: a skater's points a game, or a
+  // goalie's points a start and his share of his team's games - and the first
+  // night he can play, when he is out.
+  function seasonEntry(i) {
+    const p = P[i];
+    let from = null;
+    if (i in state.season.out) {
+      const back = state.season.out[i];
+      const d = back == null ? -1 : DAYS.findIndex((x) => x >= back);
+      from = d < 0 ? Infinity : d;
+    }
+    const n = Math.max(p.g, 1e-6);
+    return isGoalie(p)
+      ? { id: p.i, team: p.t, rate: p.m / n, elig: ["G"], share: Math.min(1, p.g / SEASON_GAMES), from }
+      : { id: p.i, team: p.t, rate: p.m / n, elig: eligible(p), from };
+  }
+
+  // My lineup over the window now and with the moves being tried; what each of
+  // mine is worth to it; and, for every free agent, what he would add to the
+  // lineup after the moves, night by night on his team's nights. Sets p.win and
+  // p.wgames, which the Adds sort reads.
+  let seasonNow = null;
+  function seasonScenario() {
+    for (const p of P) { p.win = -1e9; p.wgames = 0; }
+    const win = CAL ? seasonWindow() : null;
+    if (!win) return null;
+    const shape = DATA.rosterShape;
+    const s = state.season;
+    const cache = new Map();
+    const E = (i) => { if (!cache.has(i)) cache.set(i, seasonEntry(i)); return cache.get(i); };
+    const drops = new Set(s.drops);
+    const nowIdx = state.roster;
+    const afterIdx = nowIdx.filter((i) => !drops.has(i)).concat(s.adds.filter((i) => !nowIdx.includes(i)));
+    const pts = (idx) => windowPoints(idx.map(E), CAL, shape, win.first, win.last);
+    const sum = (m) => [...m.values()].reduce((a, b) => a + b, 0);
+    const now = pts(nowIdx);
+    const after = pts(afterIdx);
+    const inWeek = (m, w) => [...m].reduce((a, [d, v]) => a + (DAYS[d] >= w.start && DAYS[d] <= w.end ? v : 0), 0);
+    const weeks = win.weeks.map((w) => ({ week: w.week, partial: DAYS[win.first] > w.start,
+                                          now: inWeek(now, w), after: inWeek(after, w) }));
+    const nowTotal = sum(now);
+    const contrib = {}, games = {};
+    const nightsFor = (e) => (CAL[e.team] || []).filter((d) => d >= win.first && d <= win.last
+                                                         && !(e.from != null && d < e.from));
+    for (const i of nowIdx) {
+      contrib[i] = nowTotal - sum(pts(nowIdx.filter((j) => j !== i)));
+      games[i] = nightsFor(E(i)).length;
+    }
+    const on = new Map();
+    for (const i of afterIdx) {
+      for (const d of nightsFor(E(i))) { if (!on.has(d)) on.set(d, []); on.get(d).push(E(i)); }
+    }
+    const base = new Map([...on].map(([d, t]) => [d, nightPoints(t, shape)]));
+    const held = new Set(afterIdx);
+    for (const p of P) {
+      if (state.gone.has(p.i) || held.has(p.i)) continue;
+      const e = E(p.i);
+      const nights = nightsFor(e);
+      p.wgames = nights.length;
+      p.win = nights.reduce((a, d) => a + nightPoints((on.get(d) || []).concat([e]), shape) - (base.get(d) || 0), 0);
+    }
+    return { win, weeks, nowTotal, afterTotal: sum(after), contrib, games };
+  }
+
+  const rateLabel = (p) => (isGoalie(p) ? `${(p.m / Math.max(p.g, 1e-6)).toFixed(1)}/start`
+                                         : `${(p.m / Math.max(p.g, 1e-6)).toFixed(2)}/g`);
+
+  function drawSeason() {
+    const el = document.getElementById("seasonview");
+    if (state.view !== "season") return;
+    if (!CAL || !WEEKS.length) {
+      el.innerHTML = `<p class="empty">This page was built without the season's schedule or the league's weeks.
+        Rebuild it from a board directory with schedule.csv and weeks.csv.</p>`;
+      return;
+    }
+    const sc = seasonNow;
+    if (!sc) { el.innerHTML = `<p class="empty">The season's schedule has no games left.</p>`; return; }
+    const s = state.season;
+    const opts = [1, 2, 3, 4].map((n) => `<option value="${n}" ${n === s.weeks ? "selected" : ""}>${
+      n === 1 ? "this week" : `this week + ${n - 1}`}</option>`).join("");
+    const src = league.source === "server"
+      ? `Rosters from the league file${league.updatedAt ? ` · saved ${new Date(league.updatedAt).toLocaleString()}` : ""}`
+      : "Rosters from this page's draft marks";
+    const bar = `<div class="sbar">Look ahead <select id="sweeks" aria-label="Weeks to look ahead">${opts}</select>
+      <span class="span">${dayLabel(sc.win.first)} → ${dayLabel(sc.win.last)}</span>
+      <span class="src">${src}</span></div>`;
+
+    const chip = (i, kind) => `<button class="chipx ${kind}" data-${kind}="${i}" title="Take out of the scenario">${
+      kind === "drop" ? "\u2212" : "+"} ${P[i].n} \u00d7</button>`;
+    const moves = `<div class="moves"><b>Drop</b> ${s.drops.map((i) => chip(i, "drop")).join("")
+        || '<span class="empty">tick Drop on my roster</span>'}
+      <b>Add</b> ${s.adds.map((i) => chip(i, "add")).join("") || '<span class="empty">tick Add on a free agent</span>'}</div>`;
+    const weekRows = sc.weeks.map((w) => `<tr><td class="left">Week ${w.week}${w.partial ? ", rest of it" : ""}</td>
+        <td>${w.now.toFixed(1)}</td><td>${w.after.toFixed(1)}</td>
+        <td class="${tone(w.after - w.now)}">${signed1(w.after - w.now)}</td></tr>`).join("");
+    const change = sc.afterTotal - sc.nowTotal;
+    const net = s.adds.length - s.drops.length;
+    const scen = `<div class="scen">${moves}
+      <table class="stable"><thead><tr><th class="left">Expected points in my lineup</th><th>Now</th>
+        <th>With the moves</th><th>Change</th></tr></thead>
+        <tbody>${weekRows}<tr class="total"><td class="left">Total</td><td>${sc.nowTotal.toFixed(1)}</td>
+          <td>${sc.afterTotal.toFixed(1)}</td><td class="${tone(change)}">${signed1(change)}</td></tr></tbody></table>
+      ${net > 0 ? `<p class="rnote">${net} more add${net > 1 ? "s" : ""} than drops: that needs ${
+        net > 1 ? `${net} open roster spots` : "an open roster spot"}.</p>` : ""}
+      ${s.drops.length || s.adds.length ? `<div class="sbtns"><button class="btn" id="sapply"
+        title="After making them in Yahoo: my roster and the free agents change to match">Record these moves</button>
+        <button class="btn" id="sclear">Clear</button></div>` : ""}</div>`;
+
+    const off = league.me ? league.unresolved.filter((u) => u.includes(`(${league.me}`)) : [];
+    const offNote = off.length ? `<p class="rnote">Not in the model, so not counted: ${
+      off.map((u) => u.split(" (")[0]).join(", ")}.</p>` : "";
+    const mineRows = [...state.roster].sort((a, b) => (sc.contrib[b] ?? 0) - (sc.contrib[a] ?? 0)).map((i) => {
+      const p = P[i];
+      const out = i in s.out;
+      const label = out ? (s.out[i] ? `Out to ${shortDate(s.out[i])}` : "Out") : "Out";
+      return `<tr data-i="${i}"><td class="left"><div class="pname">${p.n}</div>
+          <div class="psub">${eligible(p).join("/")} · ${p.t}</div></td>
+        <td class="dim">${sc.games[i] ?? 0}</td><td class="mval">${(sc.contrib[i] ?? 0).toFixed(1)}</td>
+        <td class="dim">${rateLabel(p)}</td>
+        <td class="acts"><button class="mini warn" data-out="${i}" aria-pressed="${out}"
+            title="Out of my lineup until the date, or until cleared">${label}</button>
+          <button class="mini" data-drop="${i}" aria-pressed="${s.drops.includes(i)}">Drop</button></td></tr>`;
+    }).join("");
+
+    const fa = visible().filter((p) => !state.gone.has(p.i) && p.win > -1e8);
+    const faRows = fa.slice(0, 80).map((p) => `<tr data-i="${p.i}"><td class="left">
+          <div class="pname">${p.n}${swingBadge(p)}</div><div class="psub">${eligible(p).join("/")} · ${p.t}</div></td>
+        <td class="dim">${p.wgames}</td><td class="mval">${p.win.toFixed(1)}</td><td class="dim">${rateLabel(p)}</td>
+        <td class="mval">${fmt0(p.m)}</td><td class="vorp ${p.vorp < 0 ? "neg" : ""}">${signed(p.vorp)}</td>
+        <td class="acts"><button class="mini" data-add="${p.i}" aria-pressed="false">Add</button>
+          <button class="mini" data-taken="${p.i}" title="Someone else has him: take him off the free agents">Taken</button></td></tr>`).join("");
+
+    el.innerHTML = bar + scen + `<h3>My roster</h3>${offNote}
+      <table class="rtable"><thead><tr><th class="left">Player</th>
+        <th title="His team's games in the window, from when he can play">Games</th>
+        <th title="Expected points my lineup loses over the window without him">Worth</th>
+        <th>Rate</th><th></th></tr></thead><tbody>${mineRows}</tbody></table>
+      <h3>Free agents</h3>
+      <p class="rnote">Position, team and search filters apply; sort by <b>Adds</b> for what each would add to my lineup
+        over the window${s.drops.length ? ", after the drops above" : ""}. Showing ${Math.min(80, fa.length)} of ${fa.length}.</p>
+      <table class="rtable"><thead><tr><th class="left">Player</th><th>Games</th>
+        <th title="Expected points he would add to my lineup over the window">Adds</th><th>Rate</th>
+        <th>Season</th><th>Value</th><th></th></tr></thead><tbody>${faRows}</tbody></table>`;
+  }
+
+  function applyMoves() {
+    const s = state.season;
+    const drops = new Set(s.drops);
+    const adds = s.adds.filter((i) => !state.roster.includes(i));
+    state.roster = state.roster.filter((i) => !drops.has(i)).concat(adds);
+    for (const i of drops) { state.gone.delete(i); delete s.out[i]; }
+    for (const i of adds) state.gone.add(i);
+    s.drops = [];
+    s.adds = [];
+    saveLeague();
+    render();
+  }
+
+  const seasonEl = document.getElementById("seasonview");
+  seasonEl.addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (b) {
+      const s = state.season;
+      const toggle = (list, i) => (list.includes(i) ? list.filter((x) => x !== i) : [...list, i]);
+      if (b.dataset.drop != null) s.drops = toggle(s.drops, Number(b.dataset.drop));
+      else if (b.dataset.add != null) s.adds = toggle(s.adds, Number(b.dataset.add));
+      else if (b.dataset.out != null) {
+        const i = Number(b.dataset.out);
+        if (i in s.out) delete s.out[i]; else s.out[i] = null;
+        saveLeague();
+      } else if (b.dataset.taken != null) {
+        const i = Number(b.dataset.taken);
+        state.gone.add(i);
+        s.adds = s.adds.filter((x) => x !== i);
+        saveLeague();
+      } else if (b.id === "sapply") { applyMoves(); return; }
+      else if (b.id === "sclear") { s.drops = []; s.adds = []; }
+      else return;
+      save();
+      render();
+      return;
+    }
+    const tr = e.target.closest("tr[data-i]");
+    if (tr) { state.selected = Number(tr.dataset.i); drawDetail(); }
+  });
+  seasonEl.addEventListener("change", (e) => {
+    if (e.target.id !== "sweeks") return;
+    state.season.weeks = Number(e.target.value);
+    save();
+    render();
+  });
+
   function syncFilters() {
     document.querySelectorAll("#posfilter button").forEach((b) =>
       b.setAttribute("aria-pressed", String(b.dataset.pos === state.pos)));
@@ -2437,7 +2795,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
       compare: state.compare, shapeMode: state.shapeMode, slot: state.slot,
       rounds: state.rounds, view: state.view, offMax: state.offMax,
       sort: state.sort, asc: state.asc, pct: state.pct,
-      teams: [...state.teams], teamWeek: state.teamWeek,
+      teams: [...state.teams], teamWeek: state.teamWeek, season: state.season,
       offBoard: state.offBoard, numbers: state.numbers,
       follow: follow.on, followExtra: follow.extra, followExtraMine: follow.extraMine,
       at: Date.now(),
@@ -2475,7 +2833,16 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     state.compare = (payload.compare || []).filter((i) => P[i]).slice(0, MAX_COMPARE);
     if (Number.isFinite(payload.slot)) state.slot = payload.slot;
     if (Number.isFinite(payload.rounds)) state.rounds = payload.rounds;
-    if (payload.view === "board" || payload.view === "roster") state.view = payload.view;
+    if (["board", "roster", "season"].includes(payload.view)) state.view = payload.view;
+    if (payload.season) {
+      const s = payload.season;
+      const ok = (i) => P[i] != null;
+      state.season = {
+        weeks: [1, 2, 3, 4].includes(s.weeks) ? s.weeks : 1,
+        drops: (s.drops || []).filter(ok), adds: (s.adds || []).filter(ok),
+        out: Object.fromEntries(Object.entries(s.out || {}).filter(([i]) => ok(Number(i)))),
+      };
+    }
     if (Number.isFinite(payload.offMax)) state.offMax = payload.offMax;
     if (Number.isFinite(payload.pct) && payload.pct >= 1 && payload.pct <= 99) state.pct = payload.pct;
     state.teams = new Set((payload.teams || []).filter((t) => TEAMS.includes(t)));
@@ -2504,6 +2871,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
   render();
   // A page that was following when it was closed picks up where it left off.
   if (follow.resume && CAN_FOLLOW) setFollow(true);
+  loadLeague();
 
   useCap("db").then((db) => {
     if (!db) { note("Local to this browser"); return; }

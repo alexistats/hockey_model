@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 
 from hockey.serve import board as board_mod
 from hockey.serve import recommend as recommend_mod
+from hockey.serve import season as season_mod
 from hockey.serve.identity import Resolver
 from hockey.serve.state import DraftState
 
@@ -54,6 +55,15 @@ class ObservedBoard(BaseModel):
     mine_ids: list[int] = Field(default_factory=list)
 
 
+class LeagueBody(BaseModel):
+    """The league as the page holds it: every id it names must be on the board.
+    Names the board does not know stay in the file's `unresolved`, untouched."""
+
+    mine: list[int] = Field(default_factory=list)
+    taken: list[int] = Field(default_factory=list)
+    out: dict[int, str | None] = Field(default_factory=dict)
+
+
 class MyPick(BaseModel):
     name: str | None = None
     player_id: int | None = None
@@ -73,6 +83,7 @@ def create_app(
     n_teams: int = 14,
     slot: int = 8,
     ui: Path | None = None,
+    league: Path | None = None,
 ) -> FastAPI:
     data = board_mod.load(directory, goalies, n_teams=n_teams)
     resolver = Resolver(data.players)
@@ -278,6 +289,33 @@ def create_app(
                 "<board> --goalies <goalies>, then restart with --ui <that file>",
             )
         return FileResponse(ui, media_type="text/html")
+
+    # --- the season: whose players are whose, kept in a file ---
+    @app.get("/season/league")
+    def get_league():
+        if league is None or not league.exists():
+            raise HTTPException(
+                404,
+                f"no league file at {league}: seed one with python -m hockey.serve.season seed "
+                "<draft csv> --me <my team>",
+            )
+        return season_mod.load(league).as_dict()
+
+    @app.put("/season/league")
+    def put_league(body: LeagueBody):
+        if league is None:
+            raise HTTPException(404, "this server was started without a league file")
+        unknown = sorted({*body.mine, *body.taken, *body.out} - set(names))
+        if unknown:
+            # An id the board has never seen is a page and a server out of step,
+            # not a player to keep: refuse it rather than store what cannot be read.
+            raise HTTPException(422, f"not on the board: {unknown}")
+        before = season_mod.load(league) if league.exists() else season_mod.League()
+        saved = season_mod.save(
+            season_mod.League(body.mine, body.taken, body.out, before.unresolved, before.me),
+            league,
+        )
+        return saved.as_dict()
 
     @app.get("/", include_in_schema=False)
     def home():
