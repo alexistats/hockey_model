@@ -248,6 +248,18 @@ input[type="search"] { min-width: 210px; }
   background: var(--red-wash); color: var(--ink); border: 1px solid var(--red);
 }
 .followbanner b { color: var(--red); }
+.teampanel { margin: 8px 0 0; padding: 10px 12px; border: 1px solid var(--edge); border-radius: 6px; background: var(--surface); }
+.teamhead { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 12px; color: var(--faint); }
+.teamhead label { color: var(--slate); font-size: 12.5px; }
+.teamhead select { padding: 3px 6px; margin-left: 4px; }
+.teamgrid { display: flex; flex-wrap: wrap; gap: 6px; }
+.teamgrid button {
+  font: inherit; font-family: var(--mono); font-size: 12px; color: var(--slate); background: var(--surface);
+  border: 1px solid var(--edge); border-radius: 4px; padding: 4px 8px; cursor: pointer;
+}
+.teamgrid button .n { color: var(--faint); font-size: 11px; margin-left: 4px; }
+.teamgrid button[aria-pressed="true"] { background: var(--line); border-color: var(--line); color: var(--on-accent); font-weight: 600; }
+.teamgrid button[aria-pressed="true"] .n { color: var(--on-accent); }
 
 /* ---- main grid ---- */
 .work { display: grid; grid-template-columns: minmax(0, 1fr) 350px; gap: 18px; align-items: start; }
@@ -464,6 +476,8 @@ table.rtable tr.bench td.slot { color: var(--faint); }
   <div class="controls">
     <input type="search" id="q" placeholder="Search a player" aria-label="Search a player">
     <div class="seg" id="posfilter" role="group" aria-label="Filter by position"></div>
+    <button class="btn" id="teamsbtn" aria-expanded="false" aria-controls="teampanel"
+            title="Show only some teams, with each team's games in a fantasy week">Teams</button>
     <div class="seg" id="sortby" role="group" aria-label="Sort the board">
       <button data-sort="vorp" aria-pressed="true" title="Points over the replacement player at his position">Value</button>
       <button data-sort="m" aria-pressed="false" title="Mean season fantasy points">Points</button>
@@ -481,6 +495,14 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     <button class="btn" id="reset">Clear draft</button>
   </div>
   <div class="followbanner" id="followbanner" hidden></div>
+  <div class="teampanel" id="teampanel" hidden>
+    <div class="teamhead">
+      <label id="teamweeklabel">Games in <select id="teamweek" aria-label="Fantasy week"></select></label>
+      <button class="btn" id="teamclear">Clear</button>
+      <span>Pick one or more teams; busiest first.</span>
+    </div>
+    <div class="teamgrid" id="teamgrid" role="group" aria-label="Filter by team"></div>
+  </div>
 
   <div class="work">
     <div class="board-wrap">
@@ -630,6 +652,8 @@ table.rtable tr.bench td.slot { color: var(--faint); }
   const POSITIONS = DATA.positions;
   const state = {
     sort: "vorp", asc: false, pos: "ALL", q: "",
+    // The team filter, and the fantasy week its game counts are for.
+    teams: new Set(), teamWeek: null,
     // The percentile the P column shows and sorts by.
     pct: 80,
     hideGone: false, selected: P[0] ? P[0].i : null,
@@ -904,6 +928,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
         return false;
       }
       if (state.hideGone && state.gone.has(p.i)) return false;
+      if (state.teams.size && !state.teams.has(p.t)) return false;
       if (q && !p.n.toLowerCase().includes(q) && !p.t.toLowerCase().includes(q)) return false;
       return true;
     });
@@ -2291,6 +2316,74 @@ table.rtable tr.bench td.slot { color: var(--faint); }
   }
   document.getElementById("follow").addEventListener("click", () => setFollow(!follow.on));
 
+  /* ---------- teams ---------- */
+  // For streaming: which teams play the most in a fantasy week, and who on them
+  // is still there. Teams come from the schedule when the page has one.
+  const WEEKS = DATA.weeks || [];
+  const TEAMS = CAL ? Object.keys(CAL).sort() : [...new Set(P.map((p) => p.t))].sort();
+  const teamweek = document.getElementById("teamweek");
+
+  function gamesInWeek(team, week) {
+    const w = WEEKS.find((x) => x.week === week);
+    if (!w || !CAL || !CAL[team]) return null;
+    const days = DATA.calendar.days;
+    return CAL[team].filter((d) => days[d] >= w.start && days[d] <= w.end).length;
+  }
+
+  // The first week not yet over, by this machine's date.
+  function currentWeek() {
+    if (!WEEKS.length) return null;
+    const now = new Date();
+    const today = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    return (WEEKS.find((w) => w.end >= today) || WEEKS[WEEKS.length - 1]).week;
+  }
+
+  function drawTeams() {
+    const count = (t) => (state.teamWeek == null ? null : gamesInWeek(t, state.teamWeek));
+    const order = [...TEAMS].sort((a, b) => (count(b) ?? 0) - (count(a) ?? 0) || a.localeCompare(b));
+    document.getElementById("teamgrid").innerHTML = order.map((t) => {
+      const n = count(t);
+      return `<button data-team="${t}" aria-pressed="${state.teams.has(t)}">${t}${
+        n == null ? "" : `<span class="n">${n}</span>`}</button>`;
+    }).join("");
+    const b = document.getElementById("teamsbtn");
+    b.textContent = state.teams.size ? `Teams: ${[...state.teams].sort().join(" ")}` : "Teams";
+    b.classList.toggle("on", state.teams.size > 0);
+  }
+
+  if (WEEKS.length) {
+    teamweek.innerHTML = WEEKS.map((w) =>
+      `<option value="${w.week}">week ${w.week} · ${w.start.slice(5)} to ${w.end.slice(5)}</option>`).join("");
+  } else {
+    document.getElementById("teamweeklabel").hidden = true;
+  }
+  document.getElementById("teamsbtn").addEventListener("click", (e) => {
+    const panel = document.getElementById("teampanel");
+    panel.hidden = !panel.hidden;
+    e.currentTarget.setAttribute("aria-expanded", String(!panel.hidden));
+  });
+  document.getElementById("teamgrid").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    const t = b.dataset.team;
+    if (state.teams.has(t)) state.teams.delete(t);
+    else state.teams.add(t);
+    drawTeams();
+    render();
+    save();
+  });
+  document.getElementById("teamclear").addEventListener("click", () => {
+    state.teams.clear();
+    drawTeams();
+    render();
+    save();
+  });
+  teamweek.addEventListener("change", () => {
+    state.teamWeek = Number(teamweek.value);
+    drawTeams();
+    save();
+  });
+
   function syncFilters() {
     document.querySelectorAll("#posfilter button").forEach((b) =>
       b.setAttribute("aria-pressed", String(b.dataset.pos === state.pos)));
@@ -2344,6 +2437,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
       compare: state.compare, shapeMode: state.shapeMode, slot: state.slot,
       rounds: state.rounds, view: state.view, offMax: state.offMax,
       sort: state.sort, asc: state.asc, pct: state.pct,
+      teams: [...state.teams], teamWeek: state.teamWeek,
       offBoard: state.offBoard, numbers: state.numbers,
       follow: follow.on, followExtra: follow.extra, followExtraMine: follow.extraMine,
       at: Date.now(),
@@ -2384,6 +2478,8 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     if (payload.view === "board" || payload.view === "roster") state.view = payload.view;
     if (Number.isFinite(payload.offMax)) state.offMax = payload.offMax;
     if (Number.isFinite(payload.pct) && payload.pct >= 1 && payload.pct <= 99) state.pct = payload.pct;
+    state.teams = new Set((payload.teams || []).filter((t) => TEAMS.includes(t)));
+    if (WEEKS.some((w) => w.week === payload.teamWeek)) state.teamWeek = payload.teamWeek;
     // Only a sort this page still offers; a board saved with the old Score
     // falls back to Value.
     if (SORTS.has(payload.sort)) { state.sort = payload.sort; state.asc = !!payload.asc; }
@@ -2398,6 +2494,9 @@ table.rtable tr.bench td.slot { color: var(--faint); }
   document.getElementById("offmax").value = state.offMax;
   pctin.value = state.pct;
   syncSort();
+  if (state.teamWeek == null) state.teamWeek = currentWeek();
+  if (state.teamWeek != null) teamweek.value = String(state.teamWeek);
+  drawTeams();
 
   document.getElementById("footnote").innerHTML = DATA.footnote;
   document.getElementById("kicker").textContent = DATA.kicker;
@@ -2411,7 +2510,12 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     store = db;
     db.doc(DOC).get()
       .then((doc) => {
-        if (doc && (doc.mine || doc.gone)) { adopt(doc); render(); }
+        if (doc && (doc.mine || doc.gone)) {
+          adopt(doc);
+          if (state.teamWeek != null) teamweek.value = String(state.teamWeek);
+          drawTeams();
+          render();
+        }
         note("Saved to this board");
       })
       .catch(() => note("Local to this browser"));

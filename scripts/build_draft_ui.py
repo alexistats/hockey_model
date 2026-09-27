@@ -189,6 +189,19 @@ def main() -> None:
     else:
         print(f"warning: no {schedule_file}; the page will show no schedule fit")
 
+    # The league's fantasy weeks, so the team filter can say how many games each
+    # team plays in the week being streamed. Week one is short: it starts on
+    # opening night, not on a Monday.
+    weeks = None
+    weeks_file = out / "weeks.csv"
+    if weeks_file.exists():
+        weeks = [
+            {"week": int(r.week), "start": str(r.start), "end": str(r.end)}
+            for r in pd.read_csv(weeks_file).itertuples()
+        ]
+    else:
+        print(f"warning: no {weeks_file}; the team filter will show no weekly games")
+
     # Last season against the two before it, from the export. Only skaters with
     # three full seasons have a row; the page flags the big swings and shows the
     # comparison for the rest.
@@ -357,6 +370,7 @@ def main() -> None:
         "noClearCall": NO_CLEAR_CALL,
         "urgent": URGENT,
         "calendar": calendar,
+        "weeks": weeks,
         "offNightMax": off_night_max,
         "swing": None
         if swing_season is None
