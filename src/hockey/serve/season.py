@@ -98,6 +98,24 @@ def seed_from_draft(rows: list[dict], me: str, resolve) -> League:
     return league
 
 
+def resolve_unresolved(league: League, resolve) -> League:
+    """Place the names that now resolve - after players were added to the
+    board or the sheet of players outside the model - on the team they were
+    recorded against; the rest stay names."""
+    still = []
+    for entry in league.unresolved:
+        name, _, rest = entry.partition(" (")
+        team = rest.split(")")[0].split(",")[0]
+        hit = resolve(name, None)
+        if not hit.ok:
+            still.append(entry)
+            continue
+        pid = int(hit.player_id)
+        (league.mine if team == league.me else league.taken).append(pid)
+    league.unresolved = still
+    return league
+
+
 def _resolve_or_fail(resolve, name: str) -> int:
     hit = resolve(name, None)
     if not hit.ok:
@@ -126,14 +144,50 @@ def main() -> None:
         metavar="NAME[=YYYY-MM-DD]",
         help="one of mine who is out, with his expected return date if there is one",
     )
+    fix = sub.add_parser("resolve", help="place names that now resolve, keeping everything else")
+    fix.add_argument("--board", default="artifacts/board_v3")
+    fix.add_argument("--goalies", default="artifacts/goalies_v2")
+    fix.add_argument("--out", dest="path", default=str(DEFAULT_PATH))
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
+    import pandas as pd
+
+    from hockey import extras as extras_mod
     from hockey.serve import board as board_mod
     from hockey.serve.identity import Resolver
 
     data = board_mod.load(Path(args.board), Path(args.goalies) if args.goalies else None)
-    resolve = Resolver(data.players).resolve
+    known = data.players[["player", "player_id", "slot"]]
+    sheet = extras_mod.load()
+    if sheet is not None:
+        outside = sheet[~sheet["nhl_id"].isin(known["player_id"])]
+        known = pd.concat(
+            [
+                known,
+                pd.DataFrame(
+                    {
+                        "player": outside["player"],
+                        "player_id": outside["nhl_id"],
+                        "slot": outside["eligible"].map(lambda e: e[0]),
+                    }
+                ),
+            ],
+            ignore_index=True,
+        )
+    resolve = Resolver(known).resolve
+    if args.command == "resolve":
+        before = load(Path(args.path))
+        n = len(before.unresolved)
+        saved = save(resolve_unresolved(before, resolve), Path(args.path))
+        logger.info(
+            "placed %d of %d names; %d still unresolved: %s",
+            n - len(saved.unresolved),
+            n,
+            len(saved.unresolved),
+            ", ".join(u.split(" (")[0] for u in saved.unresolved) or "none",
+        )
+        return
     with open(args.draft, encoding="utf-8") as f:
         league = seed_from_draft(list(csv.DictReader(f)), args.me, resolve)
     for name in args.add:

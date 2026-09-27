@@ -18,6 +18,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from hockey import extras as extras_mod
 from hockey.export import replacement_slots
 from hockey.export.form import SWING
 from hockey.seasons import PROJECTION_SEASON, SEASON_LENGTH, season_label
@@ -270,6 +271,21 @@ def main() -> None:
             )
         totals[:, n] = column[rng.choice(len(column), size=n_draws, replace=False)]
 
+    # Players the model has no projection for, from the hardcoded sheet, at
+    # replacement level for their position (hockey/extras.py). They carry
+    # fantasy totals so the page can place them, and no category or games draws:
+    # the page marks them and leaves them out of what needs those.
+    sheet = extras_mod.load()
+    levels_file = out / "replacement_levels.csv"
+    if sheet is not None and levels_file.exists():
+        levels = pd.read_csv(levels_file).set_index("position")["replacement"].to_dict()
+        extra_rows, extra_draws = extras_mod.board_rows(sheet, levels, board, n_draws, rng)
+        if len(extra_rows):
+            totals = np.concatenate([totals, extra_draws.astype("float32")], axis=1)
+            is_goalie = is_goalie + [slot == "G" for slot in extra_rows["slot"]]
+            board = pd.concat([board, extra_rows], ignore_index=True)
+            print(f"added {len(extra_rows)} players outside the model, at replacement level")
+
     # int16 holds every plausible fantasy total and halves what the page carries.
     # Column-major: each player's draws contiguous, which is what the page slices.
     blob = pack(totals, "fantasy totals")
@@ -288,7 +304,8 @@ def main() -> None:
     for n, row in enumerate(board.itertuples()):
         pid = int(row.player_id)
         goalie = is_goalie[n]
-        c = None if goalie else cats.loc[pid]
+        extra = getattr(row, "extra", False) is True
+        c = None if goalie or extra else cats.loc[pid]
         players.append(
             {
                 "i": n,
@@ -298,7 +315,9 @@ def main() -> None:
                 # eligible for. The page needs both: one to sort and filter by,
                 # the other to refill the pools as the board empties.
                 "p": getattr(row, "slot", row.position),
-                "e": list(eligibility.get(pid, (getattr(row, "slot", row.position),))),
+                "e": list(row.eligible)
+                if extra
+                else list(eligibility.get(pid, (getattr(row, "slot", row.position),))),
                 "t": row.team,
                 # Goalies carry no age: the aging curve is measured on skaters
                 # and was never fitted for them, so there is nothing to show.
@@ -314,10 +333,12 @@ def main() -> None:
                 "o": None if room is None else room.adp.get(pid),
                 # Last season against the two before, or null without three
                 # full seasons (and always for a goalie).
-                "sw": None if goalie else swing.get(pid),
+                "sw": None if goalie or extra else swing.get(pid),
+                # Outside the model, at replacement level: the page marks him.
+                "x": 1 if extra else 0,
                 "cat": (
                     None
-                    if goalie
+                    if goalie or extra
                     else {
                         k: [
                             round(float(c[k]), 2),
@@ -328,7 +349,9 @@ def main() -> None:
                     }
                 ),
                 "gcat": (
-                    {k: round(float(getattr(row, GOALIE_COLUMNS[k])), 1) for k in GOALIE_ORDER}
+                    {}
+                    if goalie and extra
+                    else {k: round(float(getattr(row, GOALIE_COLUMNS[k])), 1) for k in GOALIE_ORDER}
                     if goalie
                     else None
                 ),

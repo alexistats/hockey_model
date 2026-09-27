@@ -446,3 +446,53 @@ later write the same file.
 `night_points` and `window_points` in `serve/schedule.py` are the reference;
 the page's copies sit in its schedule block and `tests/test_season.py` holds
 them together under Node on random rosters with goalies and injured players.
+
+## The season so far is read against the model, not averaged into it
+
+**Refresh stats** on the Season tab runs the ingest's in-season daily -
+`python -m hockey.ingest refresh`: current rosters, the schedule's results, new
+games' logs and the power-play stats only the per-player endpoint has (fetched
+just for players with unfilled games), and ESPN's injuries - then
+`python -m hockey.export.season_to_date`, which writes `artifacts/season/stats.json`.
+The server runs both as subprocesses, so the ingest stays the only code that
+calls the NHL.
+
+The file carries each player's season-to-date line in league scoring, his
+current team - a summer move shows up in the rosters before he has dressed for
+his new club, and the page moves his schedule with it - and his injury status.
+It also says how surprising his pace is. The predictive spread of an n-game
+total is the model's uncertainty about his rate, which grows with n, plus
+game-to-game noise, which grows with its square root; the posterior's per-game
+spread still carries a season of game noise, which is taken out before the two
+are combined. A player is flagged above or below the model when his total sits
+in the outer tenth of that spread. Fantasy points swing by about as much as
+they average from one game to the next, so a hot week almost never qualifies
+and forty games at the same pace usually does - which is the behaviour a flag
+has to have to be worth reading.
+
+None of this moves a projection. Whether the season so far should is the
+model's question, answered by refitting it with these games as data.
+
+## Players outside the model sit at replacement level, marked
+
+The model needs a player's NHL games to say anything about him, so a rookie, a
+prospect with a handful of games or a goalie up from the minors is not on the
+board - and was then missing from my roster and from the free agents, which
+hid real players behind a gap (Cagnoni was on my roster and invisible).
+`config/extra_players_2026.csv` lists the notable ones by NHL id, checked
+against the warehouse when it was written: the drafted players the board could
+not place and the free agents worth tracking. `hockey/extras.py` puts each at
+replacement level for his first position, as a rate - the replacement season
+over 72 games for a skater, 45 starts for a goalie - spread over the sheet's
+`games`, blank meaning 72 games or 30 starts. A backup goalie therefore has a
+replacement-level rate over a backup's workload, which is below replacement
+for the season, as it should be.
+
+They carry a spread of draws as wide as the board's own players near
+replacement at that position, so the page can place them in a range and a
+sort without presenting an assumption as a certainty. The page marks them
+"rep.", leaves them out of the category comparisons they have no draws for,
+and the season export never flags them against a placeholder. The server
+accepts their ids in the league file, and `python -m hockey.serve.season
+resolve` places names that now resolve on the team they were recorded
+against. The model's own projection wins wherever it has one.

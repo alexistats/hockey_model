@@ -7,7 +7,10 @@ the newest season leaves each player pointing at their current team.
 """
 
 import argparse
+import json
 import logging
+from datetime import UTC, datetime
+from pathlib import Path
 
 from hockey.db import SessionLocal
 from hockey.ingest import sync
@@ -26,6 +29,10 @@ DEFAULT_SEASONS = [
     20252026,
 ]
 CURRENT_SEASON = 20262027
+# Who is on which roster as of the last in-season refresh. `players.team_abbrev`
+# cannot answer it: a player on no current roster - retired, unsigned - keeps
+# the team of the last roster he was on.
+ROSTERS_PATH = Path("artifacts/season/rosters.json")
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +74,12 @@ def main() -> None:
             "play-by-play",
             "injuries",
             "backfill",
+            "refresh",
         ],
         help="'backfill' runs teams + players + schedule + game-logs + player-stats "
-        "over every season in --seasons, in order.",
+        "over every season in --seasons, in order. 'refresh' is the in-season daily: "
+        "current rosters, the schedule's results, new games' logs and their "
+        "power-play stats, and injuries, for one season (the current one by default).",
     )
     parser.add_argument(
         "--season",
@@ -121,6 +131,9 @@ def _main(args) -> None:
                 # 2021-22) and silently drops a franchise that has since gone
                 # (Arizona from 2024-25). See sync.sync_teams.
                 abbrevs: list[str] | None = None
+                if args.target == "refresh":
+                    _refresh(session, client, season)
+                    continue
                 if args.target in ("players", "schedule", "backfill"):
                     abbrevs = sync.sync_teams(session, client, season)
                     logger.info("=== season %d: %d teams ===", season, len(abbrevs))
@@ -159,6 +172,40 @@ def _main(args) -> None:
                     espn.close()
     finally:
         client.close()
+
+
+def _refresh(session, client: NhlApiClient, season: int) -> None:
+    """The in-season daily: who plays where now, which games are final, their
+    logs, the stats only the per-player endpoint has, and who is hurt.
+
+    Rosters come first because `players.team_abbrev` is the one place a summer
+    trade shows up before the player has dressed for his new team; the schedule
+    next, because game logs are fetched only for games it marks final.
+    """
+    abbrevs = sync.sync_teams(session, client, season)
+    logger.info("=== refresh %d: %d teams ===", season, len(abbrevs))
+    seen: dict[int, str] = {}
+    sync.sync_players(session, client, season, abbrevs, seen=seen)
+    ROSTERS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ROSTERS_PATH.write_text(
+        json.dumps(
+            {
+                "season": season,
+                "synced_at": datetime.now(UTC).isoformat(),
+                "teams": {str(k): v for k, v in seen.items()},
+            }
+        ),
+        encoding="utf-8",
+    )
+    sync.sync_schedule(session, client, season, abbrevs)
+    new_games = sync.sync_game_logs(session, client, season)
+    sync.sync_player_stats(session, client, season, only_missing=True)
+    espn = EspnApiClient()
+    try:
+        sync.sync_injuries(session, espn)
+    finally:
+        espn.close()
+    logger.info("=== refresh %d done: %d new games ===", season, new_games)
 
 
 if __name__ == "__main__":

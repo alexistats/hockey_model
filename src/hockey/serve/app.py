@@ -17,6 +17,10 @@ against the league as it currently stands.
 """
 
 import logging
+import os
+import subprocess
+import sys
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -24,6 +28,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
+from hockey import extras as extras_mod
 from hockey.serve import board as board_mod
 from hockey.serve import recommend as recommend_mod
 from hockey.serve import season as season_mod
@@ -84,6 +89,9 @@ def create_app(
     slot: int = 8,
     ui: Path | None = None,
     league: Path | None = None,
+    stats: Path | None = None,
+    refresh_commands: list[list[str]] | None = None,
+    extras: Path | None = extras_mod.DEFAULT_PATH,
 ) -> FastAPI:
     data = board_mod.load(directory, goalies, n_teams=n_teams)
     resolver = Resolver(data.players)
@@ -305,7 +313,9 @@ def create_app(
     def put_league(body: LeagueBody):
         if league is None:
             raise HTTPException(404, "this server was started without a league file")
-        unknown = sorted({*body.mine, *body.taken, *body.out} - set(names))
+        sheet = extras_mod.load(extras) if extras is not None else None
+        outside = set() if sheet is None else set(sheet["nhl_id"])
+        unknown = sorted({*body.mine, *body.taken, *body.out} - set(names) - outside)
         if unknown:
             # An id the board has never seen is a page and a server out of step,
             # not a player to keep: refuse it rather than store what cannot be read.
@@ -316,6 +326,60 @@ def create_app(
             league,
         )
         return saved.as_dict()
+
+    # --- the season so far: a refresh job, and the stats file it writes ---
+    # The refresh is the ingest's daily (rosters, final games, their stats,
+    # injuries) and then the season-to-date export, run as subprocesses: the
+    # ingest is the only code that calls the NHL, and it stays that way.
+    if refresh_commands is None:
+        export = [sys.executable, "-m", "hockey.export.season_to_date", "--board", str(directory)]
+        if goalies is not None:
+            export += ["--goalies", str(goalies)]
+        if stats is not None:
+            export += ["--out", str(stats)]
+        refresh_commands = [[sys.executable, "-m", "hockey.ingest", "refresh"], export]
+    job: dict = {"state": "idle", "step": None, "started_at": None, "finished_at": None, "log": []}
+    job_lock = threading.Lock()
+
+    def _stamp() -> str:
+        return datetime.now(UTC).isoformat()
+
+    def _run_refresh() -> None:
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+        try:
+            for k, cmd in enumerate(refresh_commands, start=1):
+                job["step"] = f"{k} of {len(refresh_commands)}: {' '.join(cmd[1:3])}"
+                done = subprocess.run(
+                    cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env
+                )
+                job["log"] = (done.stdout + done.stderr).strip().splitlines()[-8:]
+                if done.returncode != 0:
+                    job["state"] = "failed"
+                    return
+            job["state"] = "done"
+        except Exception as e:  # a crash in the runner is a failed refresh, not a hung one
+            job.update(state="failed", log=[repr(e)])
+        finally:
+            job["finished_at"] = _stamp()
+
+    @app.post("/season/refresh")
+    def start_refresh():
+        with job_lock:
+            if job["state"] == "running":
+                raise HTTPException(409, "a refresh is already running")
+            job.update(state="running", step=None, started_at=_stamp(), finished_at=None, log=[])
+        threading.Thread(target=_run_refresh, daemon=True).start()
+        return dict(job)
+
+    @app.get("/season/refresh")
+    def refresh_status():
+        return dict(job)
+
+    @app.get("/season/stats")
+    def get_stats():
+        if stats is None or not stats.exists():
+            raise HTTPException(404, "no season stats yet: run a refresh")
+        return FileResponse(stats, media_type="application/json")
 
     @app.get("/", include_in_schema=False)
     def home():

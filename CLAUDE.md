@@ -56,6 +56,8 @@ alembic upgrade head
 
 python -m hockey.ingest backfill              # 8 seasons, several hours
 python -m hockey.ingest.coverage              # what actually landed
+python -m hockey.ingest refresh               # in season: rosters, final games, injuries
+python -m hockey.export.season_to_date        # the season so far, read against the model
 python -m hockey.yahoo auth-url               # one-time Yahoo authorization
 python -m hockey.yahoo settings               # league scoring config
 python -m hockey.yahoo crosswalk              # Yahoo ids -> NHL ids

@@ -287,6 +287,30 @@ table.stable tr.total td { border-top: 1px solid var(--edge); font-weight: 600; 
 .mini[aria-pressed="true"] { background: var(--line); border-color: var(--line); color: var(--on-accent); }
 .mini.warn[aria-pressed="true"] { background: var(--red); border-color: var(--red); color: var(--on-accent); }
 table.rtable td.acts { white-space: nowrap; text-align: right; }
+.sbar .stat { font-size: 11.5px; color: var(--slate); }
+.sbar .stat.bad { color: var(--red); }
+.xbadge { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 3px; font-size: 10px; font-weight: 700;
+  letter-spacing: .03em; background: var(--well); color: var(--slate); border: 1px dashed var(--edge); vertical-align: 1px; }
+.injb { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 3px; font-size: 10px; font-weight: 700;
+  letter-spacing: .03em; background: var(--red-wash); color: var(--red); vertical-align: 1px; }
+.moved { color: var(--amber); }
+.perfbar { display: flex; align-items: center; gap: 10px; margin: 16px 0 6px; }
+.perfbar h3 { margin: 0; }
+.perf { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 760px) { .perf { grid-template-columns: 1fr; } }
+.perf h4 { font-size: 11px; margin: 0 0 4px; text-transform: uppercase; letter-spacing: .06em; }
+.perf h4.hot { color: var(--green); }
+.perf h4.cold { color: var(--red); }
+.perf ol { list-style: none; margin: 0; padding: 0; }
+.perf li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; padding: 6px 0;
+  border-bottom: 1px solid var(--edge-soft); font-size: 12.5px; cursor: pointer; }
+.perf li:hover { background: var(--well); }
+.perf .pace { font-family: var(--mono); font-size: 12px; text-align: right; }
+.perf .psub { font-size: 11px; color: var(--faint); }
+.pbar { grid-column: 1 / -1; position: relative; height: 6px; border-radius: 3px; margin: 3px 0 1px;
+  background: linear-gradient(90deg, var(--red-wash) 0 10%, var(--well) 10% 90%, var(--line-wash) 90% 100%); }
+.pbar i { position: absolute; top: -3px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%;
+  background: var(--ink); border: 2px solid var(--surface); }
 
 /* ---- main grid ---- */
 .work { display: grid; grid-template-columns: minmax(0, 1fr) 350px; gap: 18px; align-items: start; }
@@ -687,7 +711,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     teams: new Set(), teamWeek: null,
     // The Season tab: weeks to look ahead, the moves being tried (board
     // indices), and my players who are out - index -> return date or null.
-    season: { weeks: 1, drops: [], adds: [], out: {} },
+    season: { weeks: 1, drops: [], adds: [], out: {}, perf: "all" },
     // The percentile the P column shows and sorts by.
     pct: 80,
     hideGone: false, selected: P[0] ? P[0].i : null,
@@ -1476,7 +1500,13 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     return `${DATA.swing.season}: ${s.l.toFixed(2)} points a game over ${s.gp} games, against ${
       s.b.toFixed(2)} over the two seasons before (${s.bgp} games)`;
   }
+  // Outside the model: the hardcoded sheet places him at replacement level for
+  // his position, an assumption the page never shows as a projection.
+  const isExtra = (p) => p.x === 1;
+  const XBADGE = `<span class="xbadge" title="Not in the model: valued at replacement level for his position">rep.</span>`;
+
   function swingBadge(p) {
+    if (isExtra(p)) return XBADGE;
     const s = p.sw;
     if (!DATA.swing || !s || !s.f) return "";
     const title = `${swingText(p)}. ${DATA.swing.note[s.f]}`;
@@ -1861,7 +1891,8 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     const rowKeys = allGoalies ? (DATA.goalieCats || []) : CATS;
     const labelsFor = allGoalies ? DATA.goalieCatLabels : DATA.catLabels;
     const weightsFor = allGoalies ? (DATA.goalieWeights || {}) : DATA.weights;
-    const catRows = anyGoalies && !allGoalies
+    const anyExtra = picked.some((i) => isExtra(P[i]));
+    const catRows = (anyGoalies && !allGoalies) || anyExtra
       ? ""
       : rowKeys.map((c, ci) => {
           const cells = picked.map((i, n) => {
@@ -1975,7 +2006,11 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     }).join("");
     const mx = ((p.m - lo) / (hi - lo || 1)) * W;
 
-    const catRows = isGoalie(p)
+    const catRows = isExtra(p)
+      ? `<tr><td colspan="4" class="empty">Not in the model - too few NHL games. Valued at replacement level for
+          ${eligible(p)[0]}: the rate of the player a league this size leaves on waivers, over ${fmt0(p.g)}
+          ${isGoalie(p) ? "starts" : "games"}. An assumption, not a projection.</td></tr>`
+      : isGoalie(p)
       ? (DATA.goalieCats || []).map((c) => {
           const mean = p.gcat[c];
           const w = (DATA.goalieWeights || {})[c] || 0;
@@ -2525,11 +2560,78 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     } catch { note("League file unreachable: saved in this browser only"); }
   }
 
+  // The season so far, from the refresh the server runs: each player's line, his
+  // current team - a summer move shows here before he has played for them, and
+  // the schedule follows it - and ESPN's injury status.
+  const stats = { loaded: false, asOf: null, refreshedAt: null, games: 0 };
+  const refresh = { state: "idle", step: null, log: [] };
+  let refreshTimer = null;
+
+  function adoptStats(doc) {
+    for (const p of P) {
+      p.st = null;
+      p.inj = null;
+      if (p.t0 != null) p.t = p.t0;
+    }
+    for (const [id, x] of Object.entries(doc.players || {})) {
+      const i = ID_TO_I.get(Number(id));
+      if (i == null) continue;
+      const p = P[i];
+      p.t0 = p.t;
+      if (x.team) p.t = x.team;
+      if (x.gp) p.st = x;
+    }
+    for (const [id, x] of Object.entries(doc.injuries || {})) {
+      const i = ID_TO_I.get(Number(id));
+      if (i != null) P[i].inj = x;
+    }
+    Object.assign(stats, { loaded: true, asOf: doc.as_of, refreshedAt: doc.refreshed_at, games: doc.games || 0 });
+    fitKey = null;  // a team that changed moves his schedule, so the fits are stale
+  }
+
+  async function loadStats() {
+    if (!CAN_FOLLOW) return;
+    try {
+      const r = await fetch("/season/stats");
+      if (!r.ok) return;
+      adoptStats(await r.json());
+      render();
+    } catch { /* no stats yet */ }
+  }
+
+  async function pollRefresh() {
+    clearTimeout(refreshTimer);
+    try {
+      const job = await (await fetch("/season/refresh")).json();
+      const was = refresh.state;
+      Object.assign(refresh, job);
+      if (job.state === "running") refreshTimer = setTimeout(pollRefresh, 3000);
+      else if (job.state === "done" && was === "running") await loadStats();
+      drawSeason();
+    } catch { refreshTimer = setTimeout(pollRefresh, 6000); }
+  }
+
+  async function startRefresh() {
+    try {
+      const r = await fetch("/season/refresh", { method: "POST" });
+      if (!r.ok && r.status !== 409) throw new Error(`the server said ${r.status}`);
+      refresh.state = "running";
+      drawSeason();
+      refreshTimer = setTimeout(pollRefresh, 1500);
+    } catch (e) {
+      Object.assign(refresh, { state: "failed", log: [String(e.message || e)] });
+      drawSeason();
+    }
+  }
+
   const DAYS = DATA.calendar ? DATA.calendar.days : [];
   const SEASON_GAMES = DATA.gamesInSeason || 82;
   const dayLabel = (d) => new Date(`${DAYS[d]}T12:00:00`).toLocaleDateString(undefined,
     { weekday: "short", month: "short", day: "numeric" });
   const shortDate = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const dayShort = (d) => new Date(`${DAYS[d]}T12:00:00`).toLocaleDateString(undefined,
+    { weekday: "short", day: "numeric" });
+  const dayList = (ds) => ds.map(dayShort).join(", ");
   const signed1 = (x) => (x >= 0 ? "+" : "\u2212") + Math.abs(x).toFixed(1);
   const tone = (x) => (x > 0.05 ? "gain" : x < -0.05 ? "loss" : "");
 
@@ -2573,7 +2675,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
   // p.wgames, which the Adds sort reads.
   let seasonNow = null;
   function seasonScenario() {
-    for (const p of P) { p.win = -1e9; p.wgames = 0; }
+    for (const p of P) { p.win = -1e9; p.wgames = 0; p.wdays = []; }
     const win = CAL ? seasonWindow() : null;
     if (!win) return null;
     const shape = DATA.rosterShape;
@@ -2591,12 +2693,17 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     const weeks = win.weeks.map((w) => ({ week: w.week, partial: DAYS[win.first] > w.start,
                                           now: inWeek(now, w), after: inWeek(after, w) }));
     const nowTotal = sum(now);
-    const contrib = {}, games = {};
+    // Night by night, what the moves change: the check a total cannot give.
+    const nights = [...new Set([...now.keys(), ...after.keys()])].sort((a, b) => a - b)
+      .map((d) => ({ d, delta: (after.get(d) || 0) - (now.get(d) || 0) }))
+      .filter((n) => Math.abs(n.delta) > 0.05);
+    const contrib = {}, games = {}, days = {};
     const nightsFor = (e) => (CAL[e.team] || []).filter((d) => d >= win.first && d <= win.last
                                                          && !(e.from != null && d < e.from));
     for (const i of nowIdx) {
       contrib[i] = nowTotal - sum(pts(nowIdx.filter((j) => j !== i)));
-      games[i] = nightsFor(E(i)).length;
+      days[i] = nightsFor(E(i));
+      games[i] = days[i].length;
     }
     const on = new Map();
     for (const i of afterIdx) {
@@ -2609,9 +2716,10 @@ table.rtable tr.bench td.slot { color: var(--faint); }
       const e = E(p.i);
       const nights = nightsFor(e);
       p.wgames = nights.length;
+      p.wdays = nights;
       p.win = nights.reduce((a, d) => a + nightPoints((on.get(d) || []).concat([e]), shape) - (base.get(d) || 0), 0);
     }
-    return { win, weeks, nowTotal, afterTotal: sum(after), contrib, games };
+    return { win, weeks, nowTotal, afterTotal: sum(after), contrib, games, days, nights };
   }
 
   const rateLabel = (p) => (isGoalie(p) ? `${(p.m / Math.max(p.g, 1e-6)).toFixed(1)}/start`
@@ -2633,8 +2741,16 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     const src = league.source === "server"
       ? `Rosters from the league file${league.updatedAt ? ` · saved ${new Date(league.updatedAt).toLocaleString()}` : ""}`
       : "Rosters from this page's draft marks";
+    const statLine = refresh.state === "running" ? `Refreshing: ${escapeHtml(refresh.step || "starting")}`
+      : refresh.state === "failed" ? `Refresh failed: ${escapeHtml(refresh.log[refresh.log.length - 1] || "see the server log")}`
+      : stats.loaded ? `Season stats through ${shortDate(stats.asOf)}`
+      : CAN_FOLLOW ? "No season stats yet" : "Open from the draft server to refresh stats";
+    const refreshBtn = CAN_FOLLOW ? `<button class="btn" id="srefresh" ${refresh.state === "running" ? "disabled" : ""}
+        title="Pull the NHL's rosters, final games and injuries, then re-read the season so far against the model">${
+        refresh.state === "running" ? "Refreshing…" : "Refresh stats"}</button>` : "";
     const bar = `<div class="sbar">Look ahead <select id="sweeks" aria-label="Weeks to look ahead">${opts}</select>
       <span class="span">${dayLabel(sc.win.first)} → ${dayLabel(sc.win.last)}</span>
+      ${refreshBtn}<span class="stat ${refresh.state === "failed" ? "bad" : ""}">${statLine}</span>
       <span class="src">${src}</span></div>`;
 
     const chip = (i, kind) => `<button class="chipx ${kind}" data-${kind}="${i}" title="Take out of the scenario">${
@@ -2652,6 +2768,8 @@ table.rtable tr.bench td.slot { color: var(--faint); }
         <th>With the moves</th><th>Change</th></tr></thead>
         <tbody>${weekRows}<tr class="total"><td class="left">Total</td><td>${sc.nowTotal.toFixed(1)}</td>
           <td>${sc.afterTotal.toFixed(1)}</td><td class="${tone(change)}">${signed1(change)}</td></tr></tbody></table>
+      ${sc.nights.length ? `<p class="rnote">Night by night: ${sc.nights.map((n) =>
+        `${dayShort(n.d)} <b class="${tone(n.delta)}">${signed1(n.delta)}</b>`).join(" · ")}</p>` : ""}
       ${net > 0 ? `<p class="rnote">${net} more add${net > 1 ? "s" : ""} than drops: that needs ${
         net > 1 ? `${net} open roster spots` : "an open roster spot"}.</p>` : ""}
       ${s.drops.length || s.adds.length ? `<div class="sbtns"><button class="btn" id="sapply"
@@ -2665,19 +2783,18 @@ table.rtable tr.bench td.slot { color: var(--faint); }
       const p = P[i];
       const out = i in s.out;
       const label = out ? (s.out[i] ? `Out to ${shortDate(s.out[i])}` : "Out") : "Out";
-      return `<tr data-i="${i}"><td class="left"><div class="pname">${p.n}</div>
-          <div class="psub">${eligible(p).join("/")} · ${p.t}</div></td>
-        <td class="dim">${sc.games[i] ?? 0}</td><td class="mval">${(sc.contrib[i] ?? 0).toFixed(1)}</td>
-        <td class="dim">${rateLabel(p)}</td>
+      return `<tr data-i="${i}"><td class="left">${who(p)}</td>
+        <td class="dim" title="${dayList(sc.days[i] || [])}">${sc.games[i] ?? 0}</td><td class="mval">${(sc.contrib[i] ?? 0).toFixed(1)}</td>
+        <td class="dim">${rateLabel(p)}</td><td class="dim">${soFar(p)}</td>
         <td class="acts"><button class="mini warn" data-out="${i}" aria-pressed="${out}"
             title="Out of my lineup until the date, or until cleared">${label}</button>
           <button class="mini" data-drop="${i}" aria-pressed="${s.drops.includes(i)}">Drop</button></td></tr>`;
     }).join("");
 
     const fa = visible().filter((p) => !state.gone.has(p.i) && p.win > -1e8);
-    const faRows = fa.slice(0, 80).map((p) => `<tr data-i="${p.i}"><td class="left">
-          <div class="pname">${p.n}${swingBadge(p)}</div><div class="psub">${eligible(p).join("/")} · ${p.t}</div></td>
-        <td class="dim">${p.wgames}</td><td class="mval">${p.win.toFixed(1)}</td><td class="dim">${rateLabel(p)}</td>
+    const faRows = fa.slice(0, 80).map((p) => `<tr data-i="${p.i}"><td class="left">${who(p, true)}</td>
+        <td class="dim" title="${dayList(p.wdays)}">${p.wgames}</td><td class="mval">${p.win.toFixed(1)}</td><td class="dim">${rateLabel(p)}</td>
+        <td class="dim">${soFar(p)}</td>
         <td class="mval">${fmt0(p.m)}</td><td class="vorp ${p.vorp < 0 ? "neg" : ""}">${signed(p.vorp)}</td>
         <td class="acts"><button class="mini" data-add="${p.i}" aria-pressed="false">Add</button>
           <button class="mini" data-taken="${p.i}" title="Someone else has him: take him off the free agents">Taken</button></td></tr>`).join("");
@@ -2686,13 +2803,59 @@ table.rtable tr.bench td.slot { color: var(--faint); }
       <table class="rtable"><thead><tr><th class="left">Player</th>
         <th title="His team's games in the window, from when he can play">Games</th>
         <th title="Expected points my lineup loses over the window without him">Worth</th>
-        <th>Rate</th><th></th></tr></thead><tbody>${mineRows}</tbody></table>
+        <th title="The model's projected points a game (a start, for a goalie)">Rate</th>
+        <th title="This season so far: games and points a game">So far</th><th></th></tr></thead>
+        <tbody>${mineRows}</tbody></table>
       <h3>Free agents</h3>
       <p class="rnote">Position, team and search filters apply; sort by <b>Adds</b> for what each would add to my lineup
         over the window${s.drops.length ? ", after the drops above" : ""}. Showing ${Math.min(80, fa.length)} of ${fa.length}.</p>
       <table class="rtable"><thead><tr><th class="left">Player</th><th>Games</th>
-        <th title="Expected points he would add to my lineup over the window">Adds</th><th>Rate</th>
-        <th>Season</th><th>Value</th><th></th></tr></thead><tbody>${faRows}</tbody></table>`;
+        <th title="Expected points he would add to my lineup over the window">Adds</th>
+        <th title="The model's projected points a game (a start, for a goalie)">Rate</th>
+        <th title="This season so far: games and points a game">So far</th>
+        <th title="The model's projected season points">Proj</th><th>Value</th><th></th></tr></thead>
+        <tbody>${faRows}</tbody></table>` + perfSection();
+  }
+
+  // A player's name cell: a team he has moved to, and ESPN's status if he is hurt.
+  function who(p, badge = false) {
+    const moved = p.t0 != null && p.t0 !== p.t ? ` <span class="moved" title="On the board with ${p.t0}">(was ${p.t0})</span>` : "";
+    const inj = p.inj ? `<span class="injb" title="${escapeHtml([p.inj.type, p.inj.back && `back ${p.inj.back}`]
+      .filter(Boolean).join(", ") || p.inj.status)}">${escapeHtml(p.inj.status)}</span>` : "";
+    return `<div class="pname">${p.n}${badge || isExtra(p) ? swingBadge(p) : ""}${inj}</div>
+      <div class="psub">${eligible(p).join("/")} · ${p.t}${moved}</div>`;
+  }
+  const soFar = (p) => (p.st ? `${p.st.gp} · ${p.st.pg.toFixed(2)}` : "—");
+
+  // Who is running hot or cold against the model: a season-to-date total in the
+  // outer tenth of what the model expected for that many games. The bar is where
+  // the total sits in that spread, the shaded ends the tenths that flag.
+  function perfSection() {
+    const scope = state.season.perf;
+    const seg = `<div class="seg" id="sperf" role="group" aria-label="Whose players">${[["all", "Everyone"],
+      ["mine", "My roster"], ["fa", "Free agents"]].map(([k, l]) =>
+      `<button data-perf="${k}" aria-pressed="${scope === k}">${l}</button>`).join("")}</div>`;
+    const head = `<div class="perfbar"><h3>Running against the model</h3>${seg}</div>`;
+    if (!stats.loaded || !stats.games) {
+      return head + `<p class="empty">No games in the season stats yet.${CAN_FOLLOW
+        ? " Refresh stats once games have been played." : " Open this page from the draft server to refresh them."}</p>`;
+    }
+    const mine = new Set(state.roster);
+    const pool = P.filter((p) => p.st && p.st.pct != null
+      && (scope === "all" || (scope === "mine" ? mine.has(p.i) : !state.gone.has(p.i))));
+    const line = (p) => `<li data-i="${p.i}"><div><div>${p.n}</div>
+        <div class="psub">${eligible(p).join("/")} · ${p.t} · ${p.st.gp} ${isGoalie(p) ? "starts" : "games"}</div></div>
+        <div class="pace">${p.st.pg.toFixed(2)} <span class="psub">vs ${(p.st.exp / p.st.gp).toFixed(2)}</span></div>
+        <span class="pbar" title="His total sits at the ${Math.round(100 * p.st.pct)}th percentile of what the model expected for ${p.st.gp} games"><i style="left:${(100 * p.st.pct).toFixed(1)}%"></i></span></li>`;
+    const hot = pool.filter((p) => p.st.flag === "above").sort((a, b) => b.st.pct - a.st.pct).slice(0, 12);
+    const cold = pool.filter((p) => p.st.flag === "below").sort((a, b) => a.st.pct - b.st.pct).slice(0, 12);
+    const list = (xs) => xs.map(line).join("") || `<li class="empty">no one in this group</li>`;
+    return head + `<div class="perf"><div><h4 class="hot">Above the model</h4><ol>${list(hot)}</ol></div>
+        <div><h4 class="cold">Below the model</h4><ol>${list(cold)}</ol></div></div>
+      <p class="rnote">Points a game so far against the model's rate. Flagged when a player's total is in the outer tenth
+        of what the model expected for his games: its uncertainty about his rate plus ordinary game-to-game swings, so a
+        good week rarely qualifies and forty games at the same pace usually does. The model itself only moves when it is
+        refit with this season's games.</p>`;
   }
 
   function applyMoves() {
@@ -2725,15 +2888,17 @@ table.rtable tr.bench td.slot { color: var(--faint); }
         state.gone.add(i);
         s.adds = s.adds.filter((x) => x !== i);
         saveLeague();
-      } else if (b.id === "sapply") { applyMoves(); return; }
+      } else if (b.id === "srefresh") { startRefresh(); return; }
+      else if (b.dataset.perf != null) s.perf = b.dataset.perf;
+      else if (b.id === "sapply") { applyMoves(); return; }
       else if (b.id === "sclear") { s.drops = []; s.adds = []; }
       else return;
       save();
       render();
       return;
     }
-    const tr = e.target.closest("tr[data-i]");
-    if (tr) { state.selected = Number(tr.dataset.i); drawDetail(); }
+    const row = e.target.closest("tr[data-i], li[data-i]");
+    if (row) { state.selected = Number(row.dataset.i); drawDetail(); }
   });
   seasonEl.addEventListener("change", (e) => {
     if (e.target.id !== "sweeks") return;
@@ -2841,6 +3006,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
         weeks: [1, 2, 3, 4].includes(s.weeks) ? s.weeks : 1,
         drops: (s.drops || []).filter(ok), adds: (s.adds || []).filter(ok),
         out: Object.fromEntries(Object.entries(s.out || {}).filter(([i]) => ok(Number(i)))),
+        perf: ["all", "mine", "fa"].includes(s.perf) ? s.perf : "all",
       };
     }
     if (Number.isFinite(payload.offMax)) state.offMax = payload.offMax;
@@ -2872,6 +3038,8 @@ table.rtable tr.bench td.slot { color: var(--faint); }
   // A page that was following when it was closed picks up where it left off.
   if (follow.resume && CAN_FOLLOW) setFollow(true);
   loadLeague();
+  loadStats();
+  if (CAN_FOLLOW) pollRefresh();
 
   useCap("db").then((db) => {
     if (!db) { note("Local to this browser"); return; }

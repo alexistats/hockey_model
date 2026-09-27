@@ -36,6 +36,11 @@ def main() -> None:
         default=str(season_mod.DEFAULT_PATH),
         help="the season's league file: my roster, everyone else's, who is out",
     )
+    parser.add_argument(
+        "--stats",
+        default="artifacts/season/stats.json",
+        help="where the season-to-date export is written and read",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -46,6 +51,7 @@ def main() -> None:
         slot=args.slot,
         ui=Path(args.ui),
         league=Path(args.league),
+        stats=Path(args.stats),
     )
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="info")
 

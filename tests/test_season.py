@@ -202,3 +202,181 @@ def test_the_page_scores_a_window_as_the_api_does(page_js, seed):
     assert [d for d, _ in got] == list(want)
     for (d, points), expected in zip(got, want.values(), strict=True):
         assert points == pytest.approx(expected), d
+
+
+# --- the season so far ---------------------------------------------------------
+
+
+def test_a_hot_week_is_noise_and_the_same_pace_over_forty_games_is_not():
+    from hockey.export.season_to_date import surprise
+
+    # Double the projected rate: over 4 games the game-to-game swing swamps it,
+    # over 40 it does not.
+    _, early = surprise(actual=8 * 4, n=4, rate=4.0, rate_var=0.25, game_sd=4.5)
+    _, late = surprise(actual=8 * 40, n=40, rate=4.0, rate_var=0.25, game_sd=4.5)
+    assert 0.9 < early < late
+    assert early < 0.99 and late > 0.999
+
+
+def test_surprise_is_symmetric_and_says_nothing_without_games():
+    from hockey.export.season_to_date import surprise
+
+    expected, above = surprise(actual=50, n=10, rate=4.0, rate_var=0.3, game_sd=4.0)
+    _, below = surprise(actual=30, n=10, rate=4.0, rate_var=0.3, game_sd=4.0)
+    assert expected == 40.0
+    assert above + below == pytest.approx(1.0)
+    assert surprise(actual=0, n=0, rate=4.0, rate_var=0.3, game_sd=4.0) == (0.0, None)
+
+
+def _wait(client, timeout=30.0):
+    import time
+
+    stop = time.monotonic() + timeout
+    while time.monotonic() < stop:
+        got = client.get("/season/refresh").json()
+        if got["state"] != "running":
+            return got
+        time.sleep(0.05)
+    raise AssertionError("the refresh never finished")
+
+
+def test_a_refresh_runs_its_steps_and_the_stats_it_writes_are_served(board_dir, tmp_path):
+    import sys
+
+    stats = tmp_path / "stats.json"
+    write = f"import pathlib; pathlib.Path(r'{stats}').write_text('{{\"season\": 20262027}}')"
+    client = TestClient(
+        create_app(
+            board_dir,
+            n_teams=4,
+            slot=3,
+            stats=stats,
+            refresh_commands=[
+                [sys.executable, "-c", "print('ingested')"],
+                [sys.executable, "-c", write],
+            ],
+        )
+    )
+    assert client.get("/season/stats").status_code == 404
+    assert client.post("/season/refresh").json()["state"] == "running"
+    assert _wait(client)["state"] == "done"
+    assert client.get("/season/stats").json() == {"season": 20262027}
+
+
+def test_a_failed_step_stops_the_refresh_and_says_why(board_dir, tmp_path):
+    import sys
+
+    never = tmp_path / "never.txt"
+    client = TestClient(
+        create_app(
+            board_dir,
+            n_teams=4,
+            slot=3,
+            refresh_commands=[
+                [sys.executable, "-c", "import sys; print('the NHL said no'); sys.exit(3)"],
+                [sys.executable, "-c", f"open(r'{never}', 'w')"],
+            ],
+        )
+    )
+    client.post("/season/refresh")
+    got = _wait(client)
+    assert got["state"] == "failed"
+    assert "the NHL said no" in got["log"]
+    assert not never.exists()
+
+
+def test_current_teams_come_from_the_roster_record_not_the_stale_players_table(tmp_path):
+    import json
+
+    from hockey.export.season_to_date import current_teams
+
+    class Stale:
+        """players.team_abbrev: a retired goalie still on the team he left."""
+
+        def execute(self, _):
+            class Rows:
+                def all(self):
+                    return [(1, "UTA"), (2, "TOR")]
+
+            return Rows()
+
+    rosters = tmp_path / "rosters.json"
+    rosters.write_text(json.dumps({"season": 20262027, "teams": {"2": "PHI"}}), encoding="utf-8")
+    # On a current roster: his new team. Not on one: no team from this source at all.
+    assert current_teams(rosters, Stale()) == {2: "PHI"}
+    # Without a roster record the table is all there is, and it is used as such.
+    assert current_teams(tmp_path / "missing.json", Stale()) == {1: "UTA", 2: "TOR"}
+
+
+# --- players outside the model --------------------------------------------------
+
+
+def test_players_outside_the_model_sit_at_replacement_level_with_a_spread():
+    from hockey import extras
+
+    sheet = pd.DataFrame(
+        {
+            "nhl_id": [1, 2, 3, 1001],
+            "player": ["A Rookie", "A Backup", "A Starter", "Ada Alpha"],
+            "team": "SJS",
+            "positions": ["D", "G", "G", "C"],
+            "games": [None, None, 45, None],
+        }
+    )
+    sheet["eligible"] = sheet["positions"].map(lambda s: tuple(s.split("|")))
+    board = pd.DataFrame({"player_id": [1001], "slot": ["C"], "vorp": [10.0], "sd": [60.0]})
+    levels = {"C": 281.0, "D": 209.0, "G": 289.0}
+    rows, draws = extras.board_rows(sheet, levels, board, 500, np.random.default_rng(0))
+    # The model's own player keeps his projection; the sheet only fills gaps.
+    assert list(rows["player_id"]) == [1, 2, 3]
+    rookie, backup, starter = rows.to_dict("records")
+    assert rookie["mean"] == pytest.approx(209.0)
+    assert rookie["vorp"] == pytest.approx(0.0)
+    # A backup: a replacement-level rate a start, over the thirty starts he gets.
+    assert backup["mean"] == pytest.approx(289.0 * 30 / 45)
+    assert starter["mean"] == pytest.approx(289.0)
+    assert draws.shape == (500, 3)
+    assert rookie["floor"] < rookie["mean"] < rookie["ceiling"]
+
+
+def test_a_position_without_a_replacement_level_is_an_error():
+    from hockey import extras
+
+    sheet = pd.DataFrame(
+        {"nhl_id": [1], "player": ["A Rover"], "team": "SJS", "positions": ["RO"], "games": [None]}
+    )
+    sheet["eligible"] = sheet["positions"].map(lambda s: (s,))
+    board = pd.DataFrame({"player_id": [9], "slot": ["C"], "vorp": [0.0], "sd": [50.0]})
+    with pytest.raises(ValueError):
+        extras.board_rows(sheet, {"C": 281.0}, board, 10, np.random.default_rng(0))
+
+
+def test_names_that_now_resolve_join_the_team_they_were_recorded_against():
+    league = season.League(
+        mine=[1],
+        taken=[2],
+        me="Me",
+        unresolved=[
+            "A Rookie (Me): unmatched",
+            "Their Rookie (Them): unmatched",
+            "My Pickup (Me, added): unmatched",
+            "Nobody Known (Them): unmatched",
+        ],
+    )
+    got = season.resolve_unresolved(
+        league, _resolver({"A Rookie": 10, "Their Rookie": 11, "My Pickup": 12})
+    )
+    assert (got.mine, got.taken) == ([1, 10, 12], [2, 11])
+    assert got.unresolved == ["Nobody Known (Them): unmatched"]
+
+
+def test_a_player_from_the_sheet_can_be_on_my_roster(board_dir, tmp_path):
+    sheet = tmp_path / "extras.csv"
+    sheet.write_text(
+        "nhl_id,player,team,positions,games,note\n4242,A Rookie,SJS,D,,\n", encoding="utf-8"
+    )
+    path = tmp_path / "league.json"
+    season.save(season.League(mine=[1001]), path)
+    client = TestClient(create_app(board_dir, n_teams=4, slot=3, league=path, extras=sheet))
+    assert client.put("/season/league", json={"mine": [1001, 4242]}).status_code == 200
+    assert client.put("/season/league", json={"mine": [1001, 9999]}).status_code == 422

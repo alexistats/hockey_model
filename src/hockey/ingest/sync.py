@@ -125,8 +125,15 @@ def _resolve_abbrevs(session: Session, abbrevs: list[str] | None) -> list[str]:
 
 
 def sync_players(
-    session: Session, client: NhlApiClient, season: int, abbrevs: list[str] | None = None
+    session: Session,
+    client: NhlApiClient,
+    season: int,
+    abbrevs: list[str] | None = None,
+    seen: dict[int, str] | None = None,
 ) -> int:
+    """Upsert every player on the season's rosters. `seen`, when given, is filled
+    with who was on which roster: `players.team_abbrev` alone cannot say that,
+    since a player on no roster keeps whatever team he last had."""
     abbrevs = _resolve_abbrevs(session, abbrevs)
     total = 0
     for abbrev in abbrevs:
@@ -134,6 +141,8 @@ def sync_players(
         players = raw.forwards + raw.defensemen + raw.goalies
         rows = [mappers.player_row(p, abbrev) for p in players]
         upsert_rows(session, Player, rows)
+        if seen is not None:
+            seen.update({int(r["nhl_id"]): abbrev for r in rows})
         total += len(rows)
     session.commit()
     logger.info("synced %d players across %d teams", total, len(abbrevs))
@@ -384,30 +393,40 @@ def sync_play_by_play(
     return len(game_ids)
 
 
-def sync_player_stats(session: Session, client: NhlApiClient, season: int) -> int:
+def sync_player_stats(
+    session: Session, client: NhlApiClient, season: int, only_missing: bool = False
+) -> int:
     """Fill stats only the per-player game-log endpoint provides: skater PPP and
     SHP, goalie SV% and shutouts. The boxscore carries none of these.
 
     Naturally idempotent - it overwrites the same values - so it is safe to
     re-run after an interrupted backfill.
+
+    `only_missing` asks only for players with a game those stats have not been
+    filled for yet. A backfill wants every player-season; an in-season refresh
+    wants the players who played since the last one, which is a few hundred
+    calls instead of a thousand.
     """
     # (player_id, game_type) pairs that actually have log rows for this season.
     # Goalie rows are excluded even though apply_boxscore should never create
     # one: the per-player endpoint answers by the player's real position, so a
     # single misfiled goalie returns a payload with no powerPlayPoints and
     # halts the run.
-    skater_pairs = session.execute(
+    skater_query = (
         select(SkaterGameLog.player_id, NhlGame.game_type)
         .join(NhlGame, SkaterGameLog.game_id == NhlGame.nhl_game_id)
         .where(NhlGame.season == season, SkaterGameLog.position != "G")
-        .distinct()
-    ).all()
-    goalie_pairs = session.execute(
+    )
+    goalie_query = (
         select(GoalieGameLog.player_id, NhlGame.game_type)
         .join(NhlGame, GoalieGameLog.game_id == NhlGame.nhl_game_id)
         .where(NhlGame.season == season)
-        .distinct()
-    ).all()
+    )
+    if only_missing:
+        skater_query = skater_query.where(SkaterGameLog.ppp.is_(None))
+        goalie_query = goalie_query.where(GoalieGameLog.shutouts.is_(None))
+    skater_pairs = session.execute(skater_query.distinct()).all()
+    goalie_pairs = session.execute(goalie_query.distinct()).all()
 
     logger.info(
         "player-stats %d: %d skater and %d goalie player-seasons to fetch",
