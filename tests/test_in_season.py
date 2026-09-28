@@ -88,3 +88,19 @@ def test_a_goalie_who_starts_more_than_expected_gets_a_bigger_share():
     )
     assert busy["share"] > quiet["share"]
     assert busy["starts"].mean() > quiet["starts"].mean()
+
+
+def test_a_goalie_squeezed_out_of_his_net_is_not_updated():
+    # No preseason starts means no rate a start: the draws are all zero.
+    got = ins.update_goalie(
+        np.zeros(4000),
+        0.0,
+        84,
+        starts=0,
+        points=0.0,
+        team_games=10,
+        remaining=74,
+        sigma_start=6.5,
+        rng=np.random.default_rng(6),
+    )
+    assert got is None

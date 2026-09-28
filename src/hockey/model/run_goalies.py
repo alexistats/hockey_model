@@ -5,6 +5,14 @@
 About ten minutes at the defaults. Unlike the skater board there is no staging:
 there are only ~210 goalies across eight seasons and the aggregated likelihood
 is 843 rows, so the whole thing fits jointly in one pass.
+
+    python -m hockey.model.run_goalies --posterior artifacts/goalies_v2/posterior.nc \
+        --out artifacts/goalies_v2
+
+reads a saved posterior again instead of fitting: after a roster move, a refresh
+or an edit to config/goalie_priors.yaml, a minute rather than a refit. None of
+those change what eight seasons of game logs say about a goalie; they change
+where he plays and how much.
 """
 
 import argparse
@@ -38,6 +46,18 @@ def main() -> None:
         "happily carries a goalie six seasons past his last game and produces a "
         "confident projection for someone who has retired.",
     )
+    parser.add_argument(
+        "--posterior",
+        default=None,
+        help="a saved posterior.nc to read instead of fitting. The panel has to "
+        "index the same goalies, teams and seasons it was fitted on.",
+    )
+    parser.add_argument(
+        "--rosters",
+        default=str(goalie_forecast.ROSTERS_PATH),
+        help="the refresh's record of who is on which roster now; a goalie on one "
+        "is projected on that team",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -60,17 +80,22 @@ def main() -> None:
         PROJECTION_SEASON,
     )
 
-    with keep_awake("goalie fit"):
-        model = goalie.build(frame, index)
-        idata = multi.sample(
-            model, draws=args.draws, tune=args.tune, chains=args.chains, seed=PROJECTION_SEASON
-        )
+    if args.posterior:
+        idata = az.from_netcdf(args.posterior)
+        _same_index(idata, index)
+        logger.info("read %s; no fit", args.posterior)
+    else:
+        with keep_awake("goalie fit"):
+            model = goalie.build(frame, index)
+            idata = multi.sample(
+                model, draws=args.draws, tune=args.tune, chains=args.chains, seed=PROJECTION_SEASON
+            )
 
-    # Save the posterior before computing anything from it. Diagnostics are
-    # cheap to redo and a fit is not; the first version of this file worked out
-    # r-hat first and lost a completed sample to an AttributeError in arviz.
-    idata.to_netcdf(str(out / "posterior.nc"))
-    logger.info("posterior saved to %s", out / "posterior.nc")
+        # Save the posterior before computing anything from it. Diagnostics are
+        # cheap to redo and a fit is not; the first version of this file worked
+        # out r-hat first and lost a completed sample to an AttributeError in arviz.
+        idata.to_netcdf(str(out / "posterior.nc"))
+        logger.info("posterior saved to %s", out / "posterior.nc")
 
     # Convergence travels with the numbers, not in a separate conversation.
     watched = [
@@ -94,9 +119,10 @@ def main() -> None:
             {
                 "goalies": index.n_goalies,
                 "rows": len(frame),
-                "draws": args.draws,
-                "tune": args.tune,
-                "chains": args.chains,
+                # Read off the posterior, which is not always this run's fit.
+                "draws": idata.posterior.sizes["draw"],
+                "tune": int(idata.posterior.attrs.get("tuning_steps", args.tune)),
+                "chains": idata.posterior.sizes["chain"],
                 "worst_rhat": _worst(az.rhat(idata), "max"),
                 "lowest_ess": _worst(az.ess(idata), "min"),
                 "divergences": int(idata.sample_stats["diverging"].sum()),
@@ -107,6 +133,13 @@ def main() -> None:
 
     scoring = {r.key: r.modifier for r in load_scoring_from_yaml().goalie_rules}
     priors = goalie_forecast.load_priors()
+    current = goalie_forecast.load_rosters(Path(args.rosters), PROJECTION_SEASON)
+    if current is None:
+        logger.warning(
+            "no %s, so every goalie is projected on the team he finished last season "
+            "on; a summer trade is invisible. Run python -m hockey.ingest refresh.",
+            args.rosters,
+        )
     board, draws = goalie_forecast.project(
         idata,
         frame,
@@ -114,32 +147,28 @@ def main() -> None:
         scoring,
         season_games=SEASON_LENGTH[PROJECTION_SEASON],
         priors=priors,
+        current=current,
     )
 
-    # The board is every goalie the model knows; the cutoffs are only about what
-    # is worth reading. A goalie left out is not a goalie judged bad.
-    #
-    # Recency is not optional. The workload walk takes a step per season whether
-    # or not anyone played, so a goalie last seen in 2018-19 still arrives at the
-    # projected season with a plausible-looking number attached - the first run
-    # of this put Roberto Luongo, Henrik Lundqvist and Corey Crawford on the
-    # board, all long retired, with Ben Bishop projected 404 points at 47 starts.
-    # Nothing downstream could have caught that, because the projection is
-    # complete and well formed; it is simply about someone who will not play.
-    latest = int(frame["season"].max())
-    if not args.include_retired:
-        stale = board[board["last_season"] < latest]
-        board = board[board["last_season"] == latest]
-        if len(stale):
-            logger.info(
-                "left out %d goalie(s) who did not appear in %d, the most recent "
-                "season in the data",
-                len(stale),
-                latest,
-            )
-    board = board[board["last_season_starts"] >= args.min_starts].reset_index(drop=True)
+    board = goalie_forecast.on_the_board(
+        board,
+        latest=int(frame["season"].max()),
+        min_starts=args.min_starts,
+        rostered=set(current or ()),
+        include_retired=args.include_retired,
+    )
     board.insert(0, "player", _names(board["player_id"]))
     board.to_csv(out / "goalie_board.csv", index=False)
+
+    # What the roster record and the shared net changed, so it is read rather
+    # than trusted.
+    changed = board[
+        (board["team"] != board["last_team"]) | (board["exp_starts"] < board["own_starts"] - 0.5)
+    ]
+    if len(changed):
+        print("\n=== moved since last season, or squeezed by a full net ===")
+        columns = ["player", "last_team", "team", "own_starts", "exp_starts", "mean", "override"]
+        print(changed.sort_values(["team", "exp_starts"])[columns].round(1).to_string(index=False))
     np.savez_compressed(
         out / "goalie_draws.npz",
         player_ids=np.array(list(draws), dtype="int64"),
@@ -157,6 +186,24 @@ def main() -> None:
     if worst > 1.01:
         print("r-hat above 1.01: treat these as provisional and rerun with more tuning.")
     print(f"wrote {out}/goalie_board.csv, goalie_draws.npz, parameters.csv, diagnostics.csv")
+
+
+def _same_index(idata, index: goalie.GoalieIndex) -> None:
+    """A saved posterior is indexed by position. Read against a panel that has
+    gained a goalie or a season since, every walk would belong to someone else,
+    and the board would be complete, plausible and about the wrong people."""
+    post = idata.posterior
+    for dim, want in (
+        ("goalie", [int(g) for g in index.goalies]),
+        ("team", [str(t) for t in index.teams]),
+        ("season", [int(s) for s in index.seasons]),
+    ):
+        got = post[dim].values.tolist()
+        if got != want:
+            raise SystemExit(
+                f"the saved posterior indexes {len(got)} {dim}s and the panel {len(want)}, "
+                f"or the same number in another order; refit rather than read it"
+            )
 
 
 def _worst(diagnostic, how: str) -> float:

@@ -512,6 +512,65 @@ accepts their ids in the league file, and `python -m hockey.serve.season
 resolve` places names that now resolve on the team they were recorded
 against. The model's own projection wins wherever it has one.
 
+## A goalie is projected where he plays now, and a team's net holds its games
+
+The goalie model's workload walk is per goalie. It knows how much of his team's
+net each goalie has had, not who else is in it now, and the forecast put each on
+the team he finished on. After the summer of 2026 that was wrong for thirteen of
+the board's goalies. Woll went to Philadelphia to back up Vladar carrying
+Toronto's 1A workload, so the pair came to 89 starts of 84 and the Season tab
+priced him at 40 starts and Toronto's team effects - near the top of its adds.
+Vancouver's four goalies came to 108.
+
+`goalie_forecast.project` now takes the refresh's roster record
+(`artifacts/season/rosters.json`) and projects a goalie on a current roster on
+that team. One on none keeps the team he finished on, because injured players
+drop off the listing (Gustavsson and Merzlikins did). Then `fill_the_net` shares
+each team's games out: the priors file's goalies first, then the model's by their
+own projected starts, each taking what he projects or what is left. Whoever the
+model has playing most keeps his workload. On a September roster the one
+squeezed is usually a goalie bound for the minors, which is why the fill goes in
+order rather than shrinking everyone alike. A team under its games is left
+alone: the rest go to call-ups. Nothing scales a team up, because a starter out
+hurt, like Gustavsson until November, is not on the roster to be counted.
+
+Separately, which team a goalie finished on is now the date of his last game.
+Sorting stints by season alone put Jarry (13 starts in Pittsburgh, then 16 in
+Edmonton) back in Pittsburgh with 13, under the board's 15-start cutoff, so he
+was missing from the board.
+
+And a goalie on a current roster is on the board whatever his last season said
+(`on_the_board`). The cutoffs, played last season with 15 starts, are about what
+is worth reading. They were hiding nineteen rostered goalies whose projections
+were already sharing their teams' nets in the forecast. Levi was on the page as
+a placeholder from the extras sheet at 30 starts. His own projection is 14.6
+starts, 104 points (80% interval 6 to 263), Edmonton's third behind Andersen
+(36.5) and Jarry (18.6).
+
+None of this touches the posterior. `run_goalies --posterior` reads the saved
+one again, checking that its goalie, team and season coordinates match the
+panel's, in about two minutes. The re-read of `goalies_v2` (worst r-hat 1.0115,
+no divergences, lowest effective sample size 240, the fit's own figures), with
+Woll entered in `config/goalie_priors.yaml` as a backup (28 starts, sd 10):
+
+```
+goalie            was            now            starts     points
+Woll              TOR            PHI            39.8->28.0 332->233  (priors file)
+Tarasov           FLA            DET            32.8->29.7 227->205  (net: Gibson 54)
+Merilainen        OTT            VAN            21.5->16.6 157->121  (net)
+Tolopilo          VAN            VAN            19.4->0    140->0    (net: fourth of four)
+Skinner           PIT            WPG            28.5->27.9 211->206  (net)
+Jarry             (not on board) EDM            18.6       143       (last game, not alphabet)
+Bobrovsky         FLA            TOR            50.6->50.5 390->390
+Andersen          CAR            EDM            36.4->36.5 270->269
+```
+
+Points per start barely move with the team (Woll 8.35 to 8.32, Bobrovsky 7.7 to
+7.7). The team effects the walk carries into the projected season are small next
+to a goalie's own, which is the priors file's point again: starts are what
+matter. The draft-day board and page are kept in `draft_day/` beside the files
+that replaced them.
+
 ## In season, the preseason posterior is updated, not refitted
 
 `hockey.model.in_season` treats the preseason posterior as the prior and the season's

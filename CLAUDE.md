@@ -66,12 +66,16 @@ python -m hockey.yahoo doctor                 # why Yahoo is answering 403
 python -m hockey.model.mvp                    # the end-to-end gate
 python -m hockey.model.run_staged --pool 300  # the draft board, ~20 min
 python -m hockey.model.run_goalies            # the goalie board, ~15 min
+python -m hockey.model.run_goalies --posterior artifacts/goalies_v2/posterior.nc \
+    --out artifacts/goalies_v2                # re-read after a trade or a priors edit, ~2 min
 python -m hockey.export artifacts/board_v2    # replacement level, value, tiers
 python -m hockey.serve.room --mocks ../draft_bot/artifacts/mocks   # the room model
 python scripts/trace_cost_of_waiting.py <mock dir> --holdout      # check it on a mock
 python scripts/build_draft_ui.py artifacts/board_v2   # the single-file draft page
-python -m hockey.serve.season seed config/draft_2026.csv --me "Alexis's Amazing Team" \n    --add NAME --drop NAME --injured "NAME=YYYY-MM-DD"  # the season's league file
-python -m hockey.serve --board artifacts/board_v3 \n    --goalies artifacts/goalies_v2 --slot 8           # the draft-day API, port 8899;
+python -m hockey.serve.season seed config/draft_2026.csv --me "Alexis's Amazing Team" \
+    --add NAME --drop NAME --injured "NAME=YYYY-MM-DD"  # the season's league file
+python -m hockey.serve --board artifacts/board_v3 \
+    --goalies artifacts/goalies_v2 --slot 8           # the draft-day API, port 8899;
                                                      # the draft page at localhost:8899/ui
                                                      # and its Season tab; --league for the file
 
@@ -115,6 +119,11 @@ alembic revision --autogenerate -m "msg"
   the random walk takes past the last observed season. Indexing it as an
   observed season would read "not played yet" as "played and scored nothing".
 - **2026-27 is an 84-game season**, not 82, under the new collective agreement.
+- **A goalie's walk is his own; the net is his team's.** The forecast projects a
+  goalie on his current roster (the refresh's `rosters.json`) and never gives a
+  team's goalies more starts than it has games. A role it cannot see - a
+  starter traded to back up - goes in `config/goalie_priors.yaml`, then re-read
+  the posterior with `--posterior`; no refit.
 - **`count` is overloaded in Yahoo's JSON.** It marks collection size and it is
   also the number of a roster slot.
 - **The room does not draft off our board.** It drafts in Yahoo's order toward

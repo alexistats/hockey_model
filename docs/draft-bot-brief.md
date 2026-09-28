@@ -5,7 +5,8 @@ what `hockey_models` hands over, and — more importantly — every way that out
 can mislead a consumer that treats it as ground truth.
 
 Written 2026-09-20 against `artifacts/board_v3` (skaters, fitted 2026-09-11)
-and `artifacts/goalies_v2` (goalies, fitted 2026-09-20).
+and `artifacts/goalies_v2` (goalies, fitted 2026-09-20; the board re-read from
+that posterior on 2026-09-27 against current rosters, see caveat 9).
 
 ---
 
@@ -38,7 +39,7 @@ Goalies come from their own board directory (`artifacts/goalies_v2`):
 
 | File | What it is |
 |---|---|
-| `goalie_board.csv` | Per goalie: mean, floor, p20, p80, ceiling, sd, `exp_starts`, `exp_wins`, `exp_saves`, `exp_ga`, `exp_shutouts`, `save_pct`, `last_season`, `override` |
+| `goalie_board.csv` | Per goalie: `team` (his current roster's), `last_team`, mean, floor, p20, p80, ceiling, sd, `exp_starts`, `exp_wins`, `exp_saves`, `exp_ga`, `exp_shutouts`, `save_pct`, `own_starts` (his workload before his team's net was shared), `last_season`, `last_season_starts`, `override` |
 | `goalie_draws.npz` | Fantasy-point draws only — no per-category arrays |
 | `posterior.nc` | The full posterior, saved before anything is computed from it |
 | `parameters.csv`, `diagnostics.csv` | r-hat, ESS, divergences |
@@ -176,7 +177,7 @@ Consequences for the bot:
 
 ### 9. Goalies exist now, from a **separate model** — read the differences
 
-The pool is 295 skaters + 66 goalies. `python -m hockey.export <board>
+The pool is 295 skaters + 86 goalies. `python -m hockey.export <board>
 --goalies <goalie board>` merges them; without that flag the board is skaters
 only and the goalie slots go unpriced.
 
@@ -195,12 +196,24 @@ What differs, and will bite a consumer that assumes uniformity:
 - **No age.** The aging curve was measured on skaters and never fitted for
   goalies, so `age` is NaN. Do not infer one.
 - **Starts, not games.** `exp_games` for a goalie is expected *starts*.
-- **Only goalies who played last season are projected.** The workload walk will
-  happily carry a retired goalie to the projected season with a confident
-  number attached — the first run of this put Luongo, Lundqvist and Crawford on
-  the board, and Ben Bishop at 404 points six seasons after his last game. The
-  board now requires an appearance in the most recent season. If you rebuild it
-  yourself, keep that filter.
+- **Only goalies who played last season, or are on a current roster, are
+  projected.** The workload walk will happily carry a retired goalie to the
+  projected season with a confident number attached — the first run of this put
+  Luongo, Lundqvist and Crawford on the board, and Ben Bishop at 404 points six
+  seasons after his last game. The board requires an appearance in the most
+  recent season unless the goalie is on a current NHL roster, which a retired
+  one is not. If you rebuild it yourself, keep that filter.
+- **A goalie is projected on his current roster, and a team's net holds its
+  games.** The walk is per goalie and knew nothing of summer trades: Woll went to
+  Philadelphia behind Vladar carrying Toronto's 1A workload, and the pair came to
+  89 starts of 84. The forecast now reads the refresh's roster record, projects
+  each goalie on the team he is on, and fills each team's 84 starts in order of
+  the model's own workloads, the priors file first. Thirteen goalies moved;
+  Philadelphia, Vancouver, Detroit and Winnipeg were over. A goalie on no roster
+  keeps the team he finished on (injured players drop off the listing) and
+  counts in no team's net. After a trade:
+  `python -m hockey.model.run_goalies --posterior artifacts/goalies_v2/posterior.nc --out artifacts/goalies_v2`,
+  about two minutes, no refit.
 - **Goalie tiers run wide.** Five goalies in tier 1 against one centre, because
   goalie outcomes are uncertain enough that the 40% threshold holds longer. That
   is real information — the top goalies are genuinely interchangeable — not a
@@ -305,6 +318,7 @@ than adjusting the posterior.
 docker compose up -d                               # Postgres on 5434
 python -m hockey.model.run_staged --pool 300       # the skater board, ~12 min
 python -m hockey.model.run_goalies --tune 2500     # the goalie board, ~25 min
+python -m hockey.ingest refresh                    # current rosters, before the board
 python -m hockey.yahoo eligibility <paste file>    # refresh eligibility
 python -m hockey.export artifacts/board_v3 --goalies artifacts/goalies_v2
 python scripts/build_draft_ui.py artifacts/board_v3 --goalies artifacts/goalies_v2

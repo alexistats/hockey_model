@@ -51,11 +51,29 @@
 # Do not assume a bad defensive team is simply bad for fantasy value - it costs
 # wins at 6 points each and refunds some of it in volume.
 
+# WHAT NO LONGER NEEDS AN ENTRY HERE
+#
+# A summer trade: a goalie on a current roster (artifacts/season/rosters.json,
+# written by `python -m hockey.ingest refresh`) is projected on that team. And a
+# net that is too full: a team's goalies are never given more starts than it
+# has games, the one the model has playing least giving way first. What that
+# cannot know is a role - that a goalie arriving with a starter's history is
+# there to back up. That is what an entry below is for.
+
 goalies:
   # - name: "Example Goalie"
   #   nhl_id: 8471234
   #   starts: 55
   #   starts_sd: 6
+
+  # Traded to Philadelphia in the summer of 2026 to back up Dan Vladar. His walk
+  # still carries Toronto's 1A workload, 40 starts; the full net alone takes him
+  # to 34.5, a 1B's. A backup's is nearer 28, and the sd is a tandem's because
+  # Vladar has one season as a starter: the job could grow.
+  - name: "Joseph Woll"
+    nhl_id: 8479361
+    starts: 28
+    starts_sd: 10
 
 teams:
   # - team: "BOS"

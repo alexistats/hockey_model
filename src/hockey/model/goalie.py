@@ -74,6 +74,8 @@ def panel(session, seasons: list[int] | None = None) -> pd.DataFrame:
 
     Team is part of the key, so a goalie traded mid-season appears twice and
     each stint is attributed to the right team rather than averaged across two.
+    `last_game` orders the stints: which team he finished on is a date, not
+    whichever of the two sorts last.
     """
     from sqlalchemy import text
 
@@ -81,6 +83,7 @@ def panel(session, seasons: list[int] | None = None) -> pd.DataFrame:
       SELECT gl.player_id,
              g.season,
              gl.team_abbrev                      AS team,
+             max(g.date)                         AS last_game,
              sum(gl.started::int)                AS starts,
              count(*)                            AS appearances,
              sum(gl.wins)                        AS wins,

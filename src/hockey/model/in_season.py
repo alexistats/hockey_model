@@ -177,7 +177,7 @@ def update_goalie(
     sigma_start: float,
     rng: np.random.Generator,
     rate_update: bool = False,
-) -> dict:
+) -> dict | None:
     """Rest-of-season draws for one goalie: points a start as a normal, and his share
     of the team's starts as a beta, updated by his starts so far.
 
@@ -185,7 +185,14 @@ def update_goalie(
     evidence. Points a start do not, unless asked: there is no goalie posterior
     fitted through a held-out season to check that update on, and a goalie's early
     save percentage is noisy enough that an unchecked update could move him a long
-    way on a bad fortnight."""
+    way on a bad fortnight.
+
+    None for a goalie with no preseason starts - squeezed out of a full net, like
+    Vancouver's fourth in September 2026. His draws hold no starts, so there is no
+    rate a start to update; the next re-read of the goalie posterior, which follows
+    the rosters, is what brings him back."""
+    if exp_starts < 0.5:
+        return None
     n_draws = len(season_points)
     r = season_points / max(exp_starts, 1e-6)
     m = float(r.mean())
@@ -346,6 +353,9 @@ def run(
                     sd,
                     rng,
                 )
+                if got is None:
+                    logger.info("goalie %d has no preseason starts; not updated", pid)
+                    continue
                 players[str(pid)] = {
                     "rate": round(float(got["rate"]), 3),
                     "pre_rate": round(float(board.at[pid, "mean"]) / exp, 3),
