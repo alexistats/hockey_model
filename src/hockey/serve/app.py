@@ -90,6 +90,7 @@ def create_app(
     ui: Path | None = None,
     league: Path | None = None,
     stats: Path | None = None,
+    ros: Path | None = None,
     refresh_commands: list[list[str]] | None = None,
     extras: Path | None = extras_mod.DEFAULT_PATH,
 ) -> FastAPI:
@@ -337,7 +338,14 @@ def create_app(
             export += ["--goalies", str(goalies)]
         if stats is not None:
             export += ["--out", str(stats)]
-        refresh_commands = [[sys.executable, "-m", "hockey.ingest", "refresh"], export]
+        # The season so far, folded into the projection: the model layer's
+        # conjugate update of the preseason posterior (hockey.model.in_season).
+        update = [sys.executable, "-m", "hockey.model.in_season", "--board", str(directory)]
+        if goalies is not None:
+            update += ["--goalies", str(goalies)]
+        if ros is not None:
+            update += ["--out", str(ros)]
+        refresh_commands = [[sys.executable, "-m", "hockey.ingest", "refresh"], export, update]
     job: dict = {"state": "idle", "step": None, "started_at": None, "finished_at": None, "log": []}
     job_lock = threading.Lock()
 
@@ -380,6 +388,12 @@ def create_app(
         if stats is None or not stats.exists():
             raise HTTPException(404, "no season stats yet: run a refresh")
         return FileResponse(stats, media_type="application/json")
+
+    @app.get("/season/ros")
+    def get_ros():
+        if ros is None or not ros.exists():
+            raise HTTPException(404, "no in-season projections yet: run a refresh")
+        return FileResponse(ros, media_type="application/json")
 
     @app.get("/", include_in_schema=False)
     def home():

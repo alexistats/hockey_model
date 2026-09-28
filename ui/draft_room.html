@@ -294,6 +294,12 @@ table.rtable td.acts { white-space: nowrap; text-align: right; }
 .injb { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 3px; font-size: 10px; font-weight: 700;
   letter-spacing: .03em; background: var(--red-wash); color: var(--red); vertical-align: 1px; }
 .moved { color: var(--amber); }
+.best { margin: 10px 0 4px; }
+.best .bhead { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.best .bhead h3 { margin: 0; }
+.best table { margin-top: 6px; }
+.best td.who { text-align: left; font-family: var(--sans); }
+.best .stale { font-size: 11px; color: var(--amber); }
 .perfbar { display: flex; align-items: center; gap: 10px; margin: 16px 0 6px; }
 .perfbar h3 { margin: 0; }
 .perf { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -1305,6 +1311,58 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     for (const d of [...on.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) out.set(d, nightPoints(on.get(d), shape));
     return out;
   }
+
+  // The best single swaps for a window: for each player of mine who could go,
+  // every candidate priced as the change in my lineup's expected points over the
+  // window if one replaced the other - the drop's loss plus the add's gain after
+  // the drop, night by night on the nights each plays. Entries as windowPoints
+  // takes them. Ties go to the lower ids, so the order is the same everywhere.
+  //
+  // A window alone would say drop a star in a week his team plays once, so with
+  // `seasonLast` each swap that gains in the window is also priced from `first`
+  // to the season's end, and one that loses over that stretch is left out and
+  // counted: {moves, hurt}. `examine` caps how many are priced that way.
+  function bestSwaps(roster, pool, droppable, calendar, shape, first, last, top, seasonLast, examine = 300) {
+    const total = (m) => { let x = 0; for (const v of m.values()) x += v; return x; };
+    const inWindow = (e, d) => d >= first && d <= last && !(e.from != null && d < e.from);
+    const base = total(windowPoints(roster, calendar, shape, first, last));
+    const out = [];
+    for (const drop of droppable) {
+      const nights = new Map();
+      for (const e of roster) {
+        if (e.id === drop) continue;
+        for (const d of calendar[e.team] || []) {
+          if (!inWindow(e, d)) continue;
+          if (!nights.has(d)) nights.set(d, []);
+          nights.get(d).push(e);
+        }
+      }
+      const kept = new Map();
+      for (const [d, t] of nights) kept.set(d, nightPoints(t, shape));
+      const loses = base - total(kept);
+      for (const f of pool) {
+        let adds = 0;
+        for (const d of calendar[f.team] || []) {
+          if (inWindow(f, d)) adds += nightPoints((nights.get(d) || []).concat([f]), shape) - (kept.get(d) || 0);
+        }
+        out.push({ drop, add: f.id, gain: adds - loses, adds, loses });
+      }
+    }
+    out.sort((a, b) => b.gain - a.gain || a.drop - b.drop || a.add - b.add);
+    if (seasonLast == null) return out.slice(0, top);
+    const byId = new Map(pool.map((f) => [f.id, f]));
+    const seasonBase = total(windowPoints(roster, calendar, shape, first, seasonLast));
+    const moves = [];
+    let hurt = 0;
+    for (const m of out.slice(0, examine)) {
+      if (m.gain <= 0 || moves.length >= top) break;
+      const after = roster.filter((e) => e.id !== m.drop).concat([byId.get(m.add)]);
+      m.season = total(windowPoints(after, calendar, shape, first, seasonLast)) - seasonBase;
+      if (m.season >= 0) moves.push(m);
+      else hurt++;
+    }
+    return { moves, hurt };
+  }
   /* schedule:end */
 
   /* room:begin
@@ -2118,14 +2176,17 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     if (!tr) return;
     const i = Number(tr.dataset.i);
     const act = e.target.dataset.act;
-    if ((act === "gone" || act === "took") && follow.on) {
+    // In season the league file is the record: a mark here is a move, and it has
+    // to reach the file, or the next load puts the player back where he was.
+    const inSeason = league.source === "server";
+    if ((act === "gone" || act === "took") && follow.on && !inSeason) {
       markByHand(i, act === "took");
     } else if (act === "gone") {
       setGone(i, !state.gone.has(i), false);
-      save();
+      inSeason ? saveLeague() : save();
     } else if (act === "took") {
       setGone(i, !state.roster.includes(i), true);
-      save();
+      inSeason ? saveLeague() : save();
     } else if (act === "cmp") {
       const at = state.compare.indexOf(i);
       if (at >= 0) state.compare.splice(at, 1);
@@ -2536,6 +2597,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
       const r = await fetch("/season/league");
       if (!r.ok) return;
       adoptLeague(await r.json());
+      if (follow.on) setFollow(false);
       render();
     } catch { /* no league file: the draft marks stand */ }
   }
@@ -2593,11 +2655,28 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     if (!CAN_FOLLOW) return;
     try {
       const r = await fetch("/season/stats");
-      if (!r.ok) return;
-      adoptStats(await r.json());
-      render();
+      if (r.ok) adoptStats(await r.json());
     } catch { /* no stats yet */ }
+    try {
+      const r = await fetch("/season/ros");
+      if (r.ok) adoptRos(await r.json());
+    } catch { /* no update yet */ }
+    render();
   }
+
+  // The in-season update (hockey.model.in_season): the preseason posterior with
+  // this season's games folded in. A player's rate moves only once he has played;
+  // before that it is the preseason rate, and the page keeps that one.
+  const ros = { loaded: false, asOf: null };
+  function adoptRos(doc) {
+    for (const p of P) p.ros = null;
+    for (const [id, x] of Object.entries(doc.players || {})) {
+      const i = ID_TO_I.get(Number(id));
+      if (i != null) P[i].ros = x;
+    }
+    Object.assign(ros, { loaded: true, asOf: doc.as_of });
+  }
+  const updated = (p) => p.ros != null && p.ros.seen > 0;
 
   async function pollRefresh() {
     clearTimeout(refreshTimer);
@@ -2664,15 +2743,37 @@ table.rtable tr.bench td.slot { color: var(--faint); }
       from = d < 0 ? Infinity : d;
     }
     const n = Math.max(p.g, 1e-6);
+    const rate = updated(p) ? p.ros.rate : p.m / n;
+    const share = updated(p) && p.ros.share != null ? p.ros.share : Math.min(1, p.g / SEASON_GAMES);
     return isGoalie(p)
-      ? { id: p.i, team: p.t, rate: p.m / n, elig: ["G"], share: Math.min(1, p.g / SEASON_GAMES), from }
-      : { id: p.i, team: p.t, rate: p.m / n, elig: eligible(p), from };
+      ? { id: p.i, team: p.t, rate, elig: ["G"], share, from }
+      : { id: p.i, team: p.t, rate, elig: eligible(p), from };
   }
 
   // My lineup over the window now and with the moves being tried; what each of
   // mine is worth to it; and, for every free agent, what he would add to the
   // lineup after the moves, night by night on his team's nights. Sets p.win and
   // p.wgames, which the Adds sort reads.
+  // Best moves: computed when asked, since every pair of mine and theirs is a
+  // lineup priced night by night, and kept until the roster, the window or the
+  // filters change.
+  let bestMoves = null;
+  const bestKey = () => JSON.stringify([state.roster, [...state.gone].length, state.season.weeks,
+    state.season.out, state.pos, [...state.teams], state.q, ros.asOf, stats.asOf]);
+  function findBestMoves() {
+    const win = seasonWindow();
+    if (!win || !CAL) return;
+    const out = state.season.out;
+    const roster = state.roster.map(seasonEntry);
+    // Players marked out keep their slot on injured reserve, so dropping one frees
+    // nothing a pickup could use; they are not offered.
+    const droppable = state.roster.filter((i) => !(i in out));
+    const held = new Set(state.roster);
+    const pool = visible().filter((p) => !state.gone.has(p.i) && !held.has(p.i)).map((p) => seasonEntry(p.i));
+    const found = bestSwaps(roster, pool, droppable, CAL, DATA.rosterShape, win.first, win.last, 10, LAST_DAY);
+    bestMoves = { key: bestKey(), list: found.moves, hurt: found.hurt, pool: pool.length };
+  }
+
   let seasonNow = null;
   function seasonScenario() {
     for (const p of P) { p.win = -1e9; p.wgames = 0; p.wdays = []; }
@@ -2722,8 +2823,20 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     return { win, weeks, nowTotal, afterTotal: sum(after), contrib, games, days, nights };
   }
 
-  const rateLabel = (p) => (isGoalie(p) ? `${(p.m / Math.max(p.g, 1e-6)).toFixed(1)}/start`
-                                         : `${(p.m / Math.max(p.g, 1e-6)).toFixed(2)}/g`);
+  // The rate the lineup uses: the updated one once he has played, marked with
+  // where it moved from.
+  const rateLabel = (p) => {
+    const pre = p.m / Math.max(p.g, 1e-6);
+    const now = updated(p) ? p.ros.rate : pre;
+    const unit = isGoalie(p) ? "/start" : "/g";
+    const txt = isGoalie(p) ? now.toFixed(1) : now.toFixed(2);
+    if (!updated(p)) return `<span title="Preseason projection">${txt}${unit}</span>`;
+    const d = now - pre;
+    const arrow = Math.abs(d) < 0.05 ? "" : d > 0 ? " \u25b2" : " \u25bc";
+    return `<span title="Preseason ${pre.toFixed(2)}, updated after ${p.ros.seen} ${isGoalie(p) ? "starts" : "games"}"
+      class="${Math.abs(d) < 0.05 ? "" : d > 0 ? "gain" : "loss"}">${txt}${unit}${arrow}</span>`;
+  };
+  const restCell = (p) => (p.ros ? `<span title="Rest of the season: ${fmt0(p.ros.p10)} to ${fmt0(p.ros.p90)} (10th to 90th), over about ${fmt0(p.ros.games)} ${isGoalie(p) ? "starts" : "games"}">${fmt0(p.ros.ros)}</span>` : "—");
 
   function drawSeason() {
     const el = document.getElementById("seasonview");
@@ -2795,11 +2908,39 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     const faRows = fa.slice(0, 80).map((p) => `<tr data-i="${p.i}"><td class="left">${who(p, true)}</td>
         <td class="dim" title="${dayList(p.wdays)}">${p.wgames}</td><td class="mval">${p.win.toFixed(1)}</td><td class="dim">${rateLabel(p)}</td>
         <td class="dim">${soFar(p)}</td>
-        <td class="mval">${fmt0(p.m)}</td><td class="vorp ${p.vorp < 0 ? "neg" : ""}">${signed(p.vorp)}</td>
+        <td class="mval">${restCell(p)}</td><td class="vorp ${p.vorp < 0 ? "neg" : ""}">${signed(p.vorp)}</td>
         <td class="acts"><button class="mini" data-add="${p.i}" aria-pressed="false">Add</button>
           <button class="mini" data-taken="${p.i}" title="Someone else has him: take him off the free agents">Taken</button></td></tr>`).join("");
 
-    el.innerHTML = bar + scen + `<h3>My roster</h3>${offNote}
+    const bestPanel = (() => {
+      const stale = bestMoves && bestMoves.key !== bestKey();
+      const head = `<div class="bhead"><h3>Best moves for this window</h3>
+        <button class="btn" id="sbest">${bestMoves ? "Find again" : "Find the best moves"}</button>
+        ${stale ? `<span class="stale">Your roster, the window or the filters changed since</span>` : ""}</div>`;
+      if (!bestMoves) {
+        return `<div class="best">${head}<p class="rnote">Every player you could drop against every free agent the
+          filters show, each swap priced as the change in your lineup's expected points over the window.</p></div>`;
+      }
+      const rows = bestMoves.list.map((m, k) => {
+        const d = P[m.drop], a = P[m.add];
+        return `<tr><td>${k + 1}</td>
+          <td class="who">\u2212 ${d.n} <span class="psub">${eligible(d).join("/")} · ${d.t}</span></td>
+          <td class="who">+ ${a.n}${isExtra(a) ? XBADGE : ""} <span class="psub">${eligible(a).join("/")} · ${a.t}</span></td>
+          <td class="${tone(m.gain)}" title="The add brings +${m.adds.toFixed(1)} after the drop; the drop costs ${m.loses.toFixed(1)}">${signed1(m.gain)}</td>
+          <td class="${tone(m.season)}" title="From today to the end of the season, this window included">${signed1(m.season)}</td>
+          <td><button class="mini" data-try="${m.drop},${m.add}">Try</button></td></tr>`;
+      }).join("");
+      return `<div class="best">${head}
+        ${bestMoves.list.length ? `<table class="stable"><thead><tr><th>#</th><th class="left">Drop</th>
+          <th class="left">Add</th><th>This window</th><th>Rest of season</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+          : `<p class="rnote">No single swap adds points over this window without costing you over the season.</p>`}
+        <p class="rnote">Ranked by what each adds to your lineup this window, among swaps that do not cost you over the
+          rest of the season${bestMoves.hurt ? ` - ${bestMoves.hurt} that would, like dropping a regular in a week his
+          team plays once, are left out` : ""}. From ${bestMoves.pool} free agents under the current filters; players
+          marked out are not offered as drops. Yahoo allows three adds a week.</p></div>`;
+    })();
+
+    el.innerHTML = bar + scen + bestPanel + `<h3>My roster</h3>${offNote}
       <table class="rtable"><thead><tr><th class="left">Player</th>
         <th title="His team's games in the window, from when he can play">Games</th>
         <th title="Expected points my lineup loses over the window without him">Worth</th>
@@ -2813,7 +2954,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
         <th title="Expected points he would add to my lineup over the window">Adds</th>
         <th title="The model's projected points a game (a start, for a goalie)">Rate</th>
         <th title="This season so far: games and points a game">So far</th>
-        <th title="The model's projected season points">Proj</th><th>Value</th><th></th></tr></thead>
+        <th title="Expected points from here to the end of the season, from the model with this season's games folded in">Rest</th><th>Value</th><th></th></tr></thead>
         <tbody>${faRows}</tbody></table>` + perfSection();
   }
 
@@ -2889,6 +3030,12 @@ table.rtable tr.bench td.slot { color: var(--faint); }
         s.adds = s.adds.filter((x) => x !== i);
         saveLeague();
       } else if (b.id === "srefresh") { startRefresh(); return; }
+      else if (b.id === "sbest") { findBestMoves(); drawSeason(); return; }
+      else if (b.dataset.try != null) {
+        const [d, a] = b.dataset.try.split(",").map(Number);
+        s.drops = [d];
+        s.adds = [a];
+      }
       else if (b.dataset.perf != null) s.perf = b.dataset.perf;
       else if (b.id === "sapply") { applyMoves(); return; }
       else if (b.id === "sclear") { s.drops = []; s.adds = []; }

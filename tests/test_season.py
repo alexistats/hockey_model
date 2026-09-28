@@ -380,3 +380,66 @@ def test_a_player_from_the_sheet_can_be_on_my_roster(board_dir, tmp_path):
     client = TestClient(create_app(board_dir, n_teams=4, slot=3, league=path, extras=sheet))
     assert client.put("/season/league", json={"mine": [1001, 4242]}).status_code == 200
     assert client.put("/season/league", json={"mine": [1001, 9999]}).status_code == 422
+
+
+# --- best moves ----------------------------------------------------------------
+
+
+def _brute_best(roster, pool, droppable, calendar, first, last, season_last):
+    """Every swap priced the slow way: the window and the rest of the season
+    recomputed whole for each."""
+
+    def total(entries, end):
+        return sum(window_points(entries, calendar, SHAPE, first, end).values())
+
+    base, season = total(roster, last), total(roster, season_last)
+    out = {}
+    for d in droppable:
+        for f in pool:
+            after = [e for e in roster if e["id"] != d] + [f]
+            out[(d, f["id"])] = (total(after, last) - base, total(after, season_last) - season)
+    return out
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_the_page_prices_every_swap_as_recomputing_the_window_would(page_js, seed):
+    calendar, entries, days = _random_week(seed)
+    half = max(2, len(entries) // 2)
+    roster, pool = entries[:half], entries[half:]
+    droppable = [e["id"] for e in roster]
+    first, last, season_last = days[1], days[5], days[-1]
+    want = _brute_best(roster, pool, droppable, calendar, first, last, season_last)
+    page = lambda es: [{**e, "elig": list(e["elig"])} for e in es]  # noqa: E731
+    given = {
+        "roster": page(roster),
+        "pool": page(pool),
+        "droppable": droppable,
+        "calendar": calendar,
+        "shape": SHAPE,
+        "first": first,
+        "last": last,
+        "end": season_last,
+    }
+    # Window only: the best five, in order, each priced as the slow way prices it.
+    got = page_js(
+        "schedule",
+        "bestSwaps(x.roster, x.pool, x.droppable, x.calendar, x.shape, x.first, x.last, 5)",
+        given,
+    )
+    windows = sorted((w for w, _ in want.values()), reverse=True)[:5]
+    assert [g["gain"] for g in got] == pytest.approx(windows)
+    for g in got:
+        assert g["gain"] == pytest.approx(want[(g["drop"], g["add"])][0])
+        assert g["gain"] == pytest.approx(g["adds"] - g["loses"])
+    # With the season check: only swaps that gain in the window and do not lose over
+    # the season, best window first.
+    kept = page_js(
+        "schedule",
+        "bestSwaps(x.roster, x.pool, x.droppable, x.calendar, x.shape, x.first, x.last, 5, x.end)",
+        given,
+    )
+    ok = sorted((w for w, season in want.values() if w > 0 and season >= -1e-9), reverse=True)[:5]
+    assert [m["gain"] for m in kept["moves"]] == pytest.approx(ok)
+    for m in kept["moves"]:
+        assert m["season"] == pytest.approx(want[(m["drop"], m["add"])][1])
+        assert m["season"] >= -1e-9

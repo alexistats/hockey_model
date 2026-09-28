@@ -41,6 +41,11 @@ def main() -> None:
         default="artifacts/season/stats.json",
         help="where the season-to-date export is written and read",
     )
+    parser.add_argument(
+        "--ros",
+        default="artifacts/season/ros.json",
+        help="where the in-season update writes its rest-of-season projections",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -52,6 +57,7 @@ def main() -> None:
         ui=Path(args.ui),
         league=Path(args.league),
         stats=Path(args.stats),
+        ros=Path(args.ros),
     )
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="info")
 

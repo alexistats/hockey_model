@@ -443,6 +443,21 @@ guessing them onto a projection. The page reads it and writes recorded moves
 back; opened from disk, it falls back to its own draft marks. A Yahoo sync can
 later write the same file.
 
+**Best moves** ranks every single swap - each player of mine who could go against
+every free agent the filters show - by what it adds to my lineup over the window,
+but only among swaps that do not cost me over the rest of the season: priced on the
+window alone, it recommended dropping Stützle in the week Ottawa plays once. Each
+swap that gains in the window is priced again from today to the season's end, and
+one that loses there is left out and counted. Players marked out are not offered as
+drops, since an injured-reserve slot frees nothing a pickup could use. The page's
+`bestSwaps` is held to a brute force that recomputes both windows whole for every
+pair, in `tests/test_season.py`.
+
+Marks on the Players tab are moves in season: with a league file loaded they are
+written to it, and draft-day following steps aside. Before this, a player freed on
+the Players tab came back as taken on the next load, because only the Season tab's
+buttons reached the file.
+
 `night_points` and `window_points` in `serve/schedule.py` are the reference;
 the page's copies sit in its schedule block and `tests/test_season.py` holds
 them together under Node on random rosters with goalies and injured players.
@@ -496,3 +511,53 @@ and the season export never flags them against a placeholder. The server
 accepts their ids in the league file, and `python -m hockey.serve.season
 resolve` places names that now resolve on the team they were recorded
 against. The model's own projection wins wherever it has one.
+
+## In season, the preseason posterior is updated, not refitted
+
+`hockey.model.in_season` treats the preseason posterior as the prior and the season's
+games as data: per player and category, a gamma matched to the posterior's per-game
+rate (a draw's season total over its games, less one season's Poisson noise) updated
+exactly by the games played, then the rest of the season simulated draw for draw.
+Per-game counts are close enough to Poisson for the conjugate update to hold: across
+2023-24 and 2024-25, the median variance-to-mean ratio of a player's per-game counts
+was 0.95-0.98 for goals, assists, PPP and SHP, 1.07 for blocks, 1.09 for shots and
+1.18 for hits.
+
+Held-out check on 2025-26: the posterior fitted through 2024-25 exactly as the board
+is (stage one, then batches of 40; 290 skaters; worst r-hat 1.018, no divergences,
+lowest effective sample size 362), cut when the median team had played 10, 20 and 40
+games (28 October, 18 November, 1 January), forecasting each player's rest of season.
+Rate error is mean absolute error in fantasy points a game, for players with 20+
+games left.
+
+```
+ cut  forecast               points MAE   CRPS   80% cover   rate MAE   games MAE
+  10  preseason, untouched        57.9    43.0     0.714       0.658       8.78
+  10  updated (rate only)         56.7    42.2     0.693       0.629       8.78
+  10  updated, availability too   63.3    47.6     0.524       0.629       8.98
+  10  pace so far                                              1.050
+  20  preseason, untouched        53.2    39.3     0.700       0.682       7.96
+  20  updated (rate only)         50.9    37.6     0.707       0.623       7.96
+  20  updated, availability too   57.5    44.5     0.497       0.623       8.70
+  20  pace so far                                              0.863
+  40  preseason, untouched        40.2    29.5     0.707       0.753       5.92
+  40  updated (rate only)         37.6    27.6     0.683       0.675       5.92
+  40  updated, availability too   39.2    30.5     0.534       0.675       6.02
+  40  pace so far                                              0.778
+```
+
+The rate update beats both the untouched projection and the pace at every cut; even
+forty games of pace predict the rest of a season worse than the preseason rate
+alone. Updating a player's chance of dressing from games missed made games worse and
+halved interval coverage - absences come in runs, not the independent games a
+beta-binomial update assumes - so it is off, and a known absence is entered as one.
+Halving the evidence (a guard against drift within a season) made the rate worse at
+every cut (0.635, 0.640, 0.693), so the full weight stands. The 80% intervals cover
+about 70% of rest-of-season totals whether updated or not: that is the preseason
+posterior's own width carried forward, not something the update introduced.
+
+Goalies update their share of starts as a beta (prior worth 20 games): who starts is
+a role, and a month of it is evidence. Their points a start stay at the preseason
+rate unless `rate_update` is asked for. There is no goalie posterior fitted through a
+held-out season to check that update on, and on the stand-in run it moved Wolf from
+7.7 to 6.0 points a start on twenty starts - too far to ship unchecked.
