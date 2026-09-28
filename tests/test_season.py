@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from hockey.serve import season
 from hockey.serve.app import create_app
 from hockey.serve.identity import Resolution
-from hockey.serve.schedule import night_points, window_points
+from hockey.serve.schedule import night_kinds, night_points, start_chances, window_points
 
 SHAPE = {"C": 2, "LW": 2, "RW": 2, "D": 4, "G": 2}
 
@@ -134,7 +134,7 @@ def _skater(pid, rate, elig, team="T0", start=None):
 
 
 def test_goalie_slots_are_the_expectation_over_who_starts():
-    goalies = [_goalie(1, 8.0, 0.6), _goalie(2, 7.0, 0.5), _goalie(3, 6.0, 0.4)]
+    goalies = [_goalie(1, 8.0, 0.6, "T0"), _goalie(2, 7.0, 0.5, "T1"), _goalie(3, 6.0, 0.4, "T2")]
     want = 0.0
     for starts in itertools.product([0, 1], repeat=3):
         chance = np.prod(
@@ -145,6 +145,49 @@ def test_goalie_slots_are_the_expectation_over_who_starts():
     assert night_points(goalies, SHAPE) == pytest.approx(want)
     # A third goalie adds something: nights one of the first two sits.
     assert night_points(goalies, SHAPE) > night_points(goalies[:2], SHAPE)
+
+
+def test_two_goalies_from_one_team_never_both_start():
+    # One slot left for them: a team's goalies are one draw, so the slot holds
+    # whichever of the two starts, and on no night both.
+    vladar, woll = _goalie(1, 7.75, 0.59, "PHI"), _goalie(2, 8.32, 0.33, "PHI")
+    one_slot = {**SHAPE, "G": 1}
+    assert night_points([vladar, woll], one_slot) == pytest.approx(0.59 * 7.75 + 0.33 * 8.32)
+    # Shares that claim more than the whole net are read as its parts.
+    over = [_goalie(1, 8.0, 0.8, "PHI"), _goalie(2, 6.0, 0.4, "PHI")]
+    assert night_points(over, SHAPE) == pytest.approx((0.8 * 8.0 + 0.4 * 6.0) / 1.2)
+
+
+def test_the_backup_takes_the_second_night_of_a_back_to_back():
+    # Tuesday-Wednesday is a back-to-back; Friday and Sunday are not.
+    days = ["2026-10-13", "2026-10-14", "2026-10-16", "2026-10-18"]
+    assert night_kinds(days) == {
+        "2026-10-13": "first",
+        "2026-10-14": "second",
+        "2026-10-16": "rest",
+        "2026-10-18": "rest",
+    }
+    starter, backup = start_chances(0.7, days), start_chances(0.3, days)
+    # The second night: the starter well under his 0.7, the backup well over his
+    # 0.3, and the backup the likelier of the two to start it.
+    second = "2026-10-14"
+    assert starter[second] < 0.4
+    assert backup[second] > 0.4
+    assert backup[second] > starter[second]
+    assert starter["2026-10-13"] == 0.7  # the first night goes as the season does
+    # Neither loses or gains starts over the schedule: it is when, not how many.
+    assert sum(starter.values()) == pytest.approx(0.7 * 4)
+    assert sum(backup.values()) == pytest.approx(0.3 * 4)
+    # Days as indices into a calendar of dates come out the same.
+    by_index = start_chances(0.7, [0, 1, 2, 3], lambda d: days[d])
+    assert list(by_index.values()) == list(starter.values())
+
+
+def test_a_workhorse_cannot_start_more_than_every_ordinary_night():
+    days = [date(2026, 10, 1 + k).isoformat() for k in range(0, 30, 2)] + ["2026-10-02"]
+    chance = start_chances(0.97, days)
+    assert max(chance.values()) <= 1.0
+    assert sum(chance.values()) == pytest.approx(0.97 * len(days))
 
 
 def test_skaters_score_the_lineup_a_manager_would_set():
@@ -173,14 +216,11 @@ def _random_week(seed: int):
     entries = []
     for k in range(rng.randint(6, 18)):
         if rng.random() < 0.2:
-            entries.append(
-                _goalie(
-                    k,
-                    round(rng.uniform(5, 9), 2),
-                    round(rng.uniform(0.3, 0.7), 2),
-                    rng.choice(teams),
-                )
-            )
+            team = rng.choice(teams)
+            goalie = _goalie(k, round(rng.uniform(5, 9), 2), round(rng.uniform(0.3, 0.7), 2), team)
+            if rng.random() < 0.7:  # back-to-backs counted, as the page does
+                goalie["chance"] = start_chances(goalie["share"], calendar[team])
+            entries.append(goalie)
         else:
             elig = tuple(rng.sample(["C", "LW", "RW", "D"], rng.randint(1, 2)))
             start = rng.choice(days) if rng.random() < 0.2 else None
@@ -202,6 +242,24 @@ def test_the_page_scores_a_window_as_the_api_does(page_js, seed):
     assert [d for d, _ in got] == list(want)
     for (d, points), expected in zip(got, want.values(), strict=True):
         assert points == pytest.approx(expected), d
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_the_page_bends_a_goalies_nights_as_the_api_does(page_js, seed):
+    rng = random.Random(seed)
+    days = sorted(rng.sample([date(2026, 10, 1 + k).isoformat() for k in range(30)], 16))
+    shares = [0.0, 0.05, round(rng.uniform(0.1, 0.9), 3), 0.5, 0.71, 0.95]
+    got = page_js(
+        "schedule",
+        "x.shares.map((s) => [[...nightKinds(x.days)], startChances(s, x.days)])",
+        {"days": days, "shares": shares},
+    )
+    for share, (kinds, chance) in zip(shares, got, strict=True):
+        assert dict(kinds) == night_kinds(days)
+        want = start_chances(share, days)
+        assert chance.keys() == want.keys()
+        for d in want:
+            assert chance[d] == pytest.approx(want[d]), (share, d)
 
 
 # --- the season so far ---------------------------------------------------------

@@ -297,6 +297,9 @@ table.rtable td.acts { white-space: nowrap; text-align: right; }
 .best { margin: 10px 0 4px; }
 .best .bhead { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .best .bhead h3 { margin: 0; }
+table.stable th.grp { text-align: center; font-family: var(--sans); font-size: 11px; color: var(--slate);
+  border-bottom: 1px solid var(--edge); }
+.best .addpos { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--slate); }
 .best table { margin-top: 6px; }
 .best td.who { text-align: left; font-family: var(--sans); }
 .best .stale { font-size: 11px; color: var(--amber); }
@@ -711,13 +714,16 @@ table.rtable tr.bench td.slot { color: var(--faint); }
   }
 
   const POSITIONS = DATA.positions;
+  // Best moves looks for adds at these positions; `keep` is NHL ids of mine it
+  // never offers as a drop.
+  const ADD_POS = ["C", "LW", "RW", "D", "G"];
   const state = {
     sort: "vorp", asc: false, pos: "ALL", q: "",
     // The team filter, and the fantasy week its game counts are for.
     teams: new Set(), teamWeek: null,
     // The Season tab: weeks to look ahead, the moves being tried (board
     // indices), and my players who are out - index -> return date or null.
-    season: { weeks: 1, drops: [], adds: [], out: {}, perf: "all" },
+    season: { weeks: 1, drops: [], adds: [], out: {}, perf: "all", addPos: [...ADD_POS], keep: [] },
     // The percentile the P column shows and sorts by.
     pct: 80,
     hideGone: false, selected: P[0] ? P[0].i : null,
@@ -981,14 +987,14 @@ table.rtable tr.bench td.slot { color: var(--faint); }
   })();
 
   /* ---------- rows ---------- */
-  function visible() {
+  function visible(pos = state.pos) {
     const q = state.q.trim().toLowerCase();
     let list = P.filter((p) => {
       // Filtering by a position asks who could fill it, so this is eligibility
       // rather than the single slot the player is currently valued at.
-      if (state.pos === "SK") {
+      if (pos === "SK") {
         if (eligible(p).includes("G")) return false;
-      } else if (state.pos !== "ALL" && !eligible(p).includes(state.pos)) {
+      } else if (pos !== "ALL" && !eligible(p).includes(pos)) {
         return false;
       }
       if (state.hideGone && state.gone.has(p.i)) return false;
@@ -1265,13 +1271,62 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     return out;
   }
 
+  // A goalie's chance to start the second night of a back-to-back against his
+  // season share: (share, chance) knots, straight lines between, flat past the
+  // last. `BACK_TO_BACK_SECOND` in schedule.py, which says where they come from.
+  const BACK_TO_BACK_SECOND = [[0, 0], [0.063, 0.132], [0.275, 0.447], [0.42, 0.457], [0.576, 0.391], [0.712, 0.366]];
+
+  // Each of a team's nights: "second" when it played the day before, "first"
+  // when it plays the day after, "rest" otherwise. `dateOf` turns a day into its
+  // date when days are indices. `night_kinds` in schedule.py.
+  function nightKinds(days, dateOf = (d) => d) {
+    const ord = new Map(days.map((d) => [d, Math.round(Date.parse(`${String(dateOf(d)).slice(0, 10)}T00:00:00Z`) / 86400000)]));
+    const ordered = [...days].sort((a, b) => ord.get(a) - ord.get(b));
+    const kinds = new Map();
+    ordered.forEach((d, j) => {
+      if (j && ord.get(d) - ord.get(ordered[j - 1]) === 1) kinds.set(d, "second");
+      else if (j + 1 < ordered.length && ord.get(ordered[j + 1]) - ord.get(d) === 1) kinds.set(d, "first");
+      else kinds.set(d, "rest");
+    });
+    return kinds;
+  }
+
+  function secondNightChance(share) {
+    const k = BACK_TO_BACK_SECOND;
+    for (let j = 1; j < k.length; j++) {
+      const [x0, y0] = k[j - 1], [x1, y1] = k[j];
+      if (share <= x1) return y0 + (y1 - y0) * (Math.max(share, x0) - x0) / (x1 - x0);
+    }
+    return k[k.length - 1][1];
+  }
+
+  // A goalie's chance to start each of his team's nights, {day: chance}: his
+  // season share bent by back-to-backs and held to the same season total.
+  // `start_chances` in schedule.py.
+  function startChances(share, days, dateOf = (d) => d) {
+    const kinds = nightKinds(days, dateOf);
+    const n = { rest: 0, first: 0, second: 0 };
+    for (const k of kinds.values()) n[k]++;
+    let second = secondNightChance(share);
+    let rest = n.rest ? share + n.second * (share - second) / n.rest : share;
+    if (rest > 1) { rest = 1; second = share + n.rest * (share - 1) / n.second; }
+    else if (rest < 0) { rest = 0; second = share + n.rest * share / n.second; }
+    const chance = { rest, first: share, second };
+    const out = {};
+    for (const [d, k] of kinds) out[d] = chance[k];
+    return out;
+  }
+
   // One night's expected lineup points, for the players on the ice tonight:
-  // {id, rate, elig} and, for a goalie, `share`. Skaters play every game their
-  // team does and the skater slots are set as above on per-game rates. A goalie
-  // starts only his share of his team's games, so the goalie slots are an
-  // expectation over which of mine start: every combination, weighted by its
-  // chance, the slots taking the best who start. `night_points` in schedule.py.
-  function nightPoints(tonight, shape) {
+  // {id, rate, elig} and, for a goalie, `share`, `team` and - back-to-backs
+  // counted - `chance`, his chance each night; `day` picks tonight's. Skaters
+  // play every game their team does and the skater slots are set as above on
+  // per-game rates. A goalie starts only some of his team's games, so the goalie
+  // slots are an expectation over which of mine start: every combination,
+  // weighted by its chance, the slots taking the best who start. A team starts
+  // one goalie a night, so two of mine from one team never both start: each team
+  // is one draw, none of them or exactly one. `night_points` in schedule.py.
+  function nightPoints(tonight, shape, day) {
     const skShape = {};
     for (const k of Object.keys(shape)) if (k !== "G") skShape[k] = shape[k];
     const sk = tonight.filter((p) => p.share == null);
@@ -1281,22 +1336,33 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     const slots = shape.G || 0;
     const gs = tonight.filter((p) => p.share != null);
     if (slots && gs.length) {
-      for (let mask = 0; mask < (1 << gs.length); mask++) {
-        let chance = 1;
-        const up = [];
-        gs.forEach((g, j) => {
-          if (mask & (1 << j)) { chance *= g.share; up.push(g.rate); } else chance *= 1 - g.share;
-        });
+      const teams = new Map();
+      for (const g of gs) {
+        const p = g.chance && day != null && g.chance[day] != null ? g.chance[day] : g.share;
+        const key = g.team != null ? g.team : `#${g.id}`;
+        if (!teams.has(key)) teams.set(key, []);
+        teams.get(key).push([p, g.rate]);
+      }
+      let combos = [[1, []]];
+      for (const group of teams.values()) {
+        const total = group.reduce((a, [p]) => a + p, 0);
+        const k = total > 1 ? 1 / total : 1;
+        const draws = [[Math.max(0, 1 - total * k), null], ...group.map(([p, r]) => [p * k, r])];
+        const next = [];
+        for (const [c, up] of combos) for (const [p, r] of draws) next.push([c * p, r == null ? up : up.concat([r])]);
+        combos = next;
+      }
+      for (const [chance, up] of combos) {
         if (!chance) continue;
-        up.sort((a, b) => b - a);
-        points += chance * up.slice(0, slots).reduce((a, b) => a + b, 0);
+        const best = [...up].sort((a, b) => b - a);
+        points += chance * best.slice(0, slots).reduce((a, b) => a + b, 0);
       }
     }
     return points;
   }
 
   // Expected lineup points each night from `first` to `last`: entries are
-  // {id, team, rate, elig, share?, from?}, `from` the first night he can play.
+  // {id, team, rate, elig, share?, chance?, from?}, `from` the first night he can play.
   // `window_points` in schedule.py.
   function windowPoints(entries, calendar, shape, first, last) {
     const on = new Map();
@@ -1308,7 +1374,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
       }
     }
     const out = new Map();
-    for (const d of [...on.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) out.set(d, nightPoints(on.get(d), shape));
+    for (const d of [...on.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) out.set(d, nightPoints(on.get(d), shape, d));
     return out;
   }
 
@@ -1338,12 +1404,12 @@ table.rtable tr.bench td.slot { color: var(--faint); }
         }
       }
       const kept = new Map();
-      for (const [d, t] of nights) kept.set(d, nightPoints(t, shape));
+      for (const [d, t] of nights) kept.set(d, nightPoints(t, shape, d));
       const loses = base - total(kept);
       for (const f of pool) {
         let adds = 0;
         for (const d of calendar[f.team] || []) {
-          if (inWindow(f, d)) adds += nightPoints((nights.get(d) || []).concat([f]), shape) - (kept.get(d) || 0);
+          if (inWindow(f, d)) adds += nightPoints((nights.get(d) || []).concat([f]), shape, d) - (kept.get(d) || 0);
         }
         out.push({ drop, add: f.id, gain: adds - loses, adds, loses });
       }
@@ -2711,6 +2777,8 @@ table.rtable tr.bench td.slot { color: var(--faint); }
   const dayShort = (d) => new Date(`${DAYS[d]}T12:00:00`).toLocaleDateString(undefined,
     { weekday: "short", day: "numeric" });
   const dayList = (ds) => ds.map(dayShort).join(", ");
+  // The look-ahead as dates, "Sep 29–Oct 4": what the Season tab's numbers are over.
+  const spanOf = (win) => `${shortDate(DAYS[win.first])}\u2013${shortDate(DAYS[win.last])}`;
   const signed1 = (x) => (x >= 0 ? "+" : "\u2212") + Math.abs(x).toFixed(1);
   const tone = (x) => (x > 0.05 ? "gain" : x < -0.05 ? "loss" : "");
 
@@ -2731,9 +2799,18 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     return { first, last, weeks };
   }
 
+  // A goalie's chance each night, per team and share: the same few dozen are
+  // asked for on every draw.
+  const chanceCache = new Map();
+  const chancesFor = (team, share) => {
+    const key = `${team}:${share}`;
+    if (!chanceCache.has(key)) chanceCache.set(key, startChances(share, CAL[team] || [], (d) => DAYS[d]));
+    return chanceCache.get(key);
+  };
+
   // A player as the lineup code takes him: a skater's points a game, or a
-  // goalie's points a start and his share of his team's games - and the first
-  // night he can play, when he is out.
+  // goalie's points a start, his share of his team's games and his chance each
+  // night, back-to-backs counted - and the first night he can play, when he is out.
   function seasonEntry(i) {
     const p = P[i];
     let from = null;
@@ -2746,7 +2823,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     const rate = updated(p) ? p.ros.rate : p.m / n;
     const share = updated(p) && p.ros.share != null ? p.ros.share : Math.min(1, p.g / SEASON_GAMES);
     return isGoalie(p)
-      ? { id: p.i, team: p.t, rate, elig: ["G"], share, from }
+      ? { id: p.i, team: p.t, rate, elig: ["G"], share, chance: CAL ? chancesFor(p.t, share) : null, from }
       : { id: p.i, team: p.t, rate, elig: eligible(p), from };
   }
 
@@ -2759,24 +2836,33 @@ table.rtable tr.bench td.slot { color: var(--faint); }
   // filters change.
   let bestMoves = null;
   const bestKey = () => JSON.stringify([state.roster, [...state.gone].length, state.season.weeks,
-    state.season.out, state.pos, [...state.teams], state.q, ros.asOf, stats.asOf]);
+    state.season.out, state.season.addPos, state.season.keep, [...state.teams], state.q, ros.asOf, stats.asOf]);
   function findBestMoves() {
     const win = seasonWindow();
     if (!win || !CAL) return;
     const out = state.season.out;
     const roster = state.roster.map(seasonEntry);
     // Players marked out keep their slot on injured reserve, so dropping one frees
-    // nothing a pickup could use; they are not offered.
-    const droppable = state.roster.filter((i) => !(i in out));
+    // nothing a pickup could use; they are not offered, and nor are the ones kept -
+    // where my read of a player differs from the model's, the model does not get
+    // to spend him.
+    const keep = new Set(state.season.keep);
+    const droppable = state.roster.filter((i) => !(i in out) && !keep.has(P[i].id));
     const held = new Set(state.roster);
-    const pool = visible().filter((p) => !state.gone.has(p.i) && !held.has(p.i)).map((p) => seasonEntry(p.i));
+    // The panel's own positions stand in for the list's position filter; the team
+    // filter and the search still apply.
+    const pos = new Set(state.season.addPos);
+    const pool = visible("ALL")
+      .filter((p) => !state.gone.has(p.i) && !held.has(p.i) && eligible(p).some((x) => pos.has(x)))
+      .map((p) => seasonEntry(p.i));
     const found = bestSwaps(roster, pool, droppable, CAL, DATA.rosterShape, win.first, win.last, 10, LAST_DAY);
-    bestMoves = { key: bestKey(), list: found.moves, hurt: found.hurt, pool: pool.length };
+    bestMoves = { key: bestKey(), list: found.moves, hurt: found.hurt, pool: pool.length,
+                  kept: state.roster.filter((i) => keep.has(P[i].id)).length, span: spanOf(win) };
   }
 
   let seasonNow = null;
   function seasonScenario() {
-    for (const p of P) { p.win = -1e9; p.wgames = 0; p.wdays = []; }
+    for (const p of P) { p.win = -1e9; p.wgames = 0; p.wdays = []; p.wstarts = null; }
     const win = CAL ? seasonWindow() : null;
     if (!win) return null;
     const shape = DATA.rosterShape;
@@ -2798,19 +2884,22 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     const nights = [...new Set([...now.keys(), ...after.keys()])].sort((a, b) => a - b)
       .map((d) => ({ d, delta: (after.get(d) || 0) - (now.get(d) || 0) }))
       .filter((n) => Math.abs(n.delta) > 0.05);
-    const contrib = {}, games = {}, days = {};
+    const contrib = {}, games = {}, days = {}, starts = {};
     const nightsFor = (e) => (CAL[e.team] || []).filter((d) => d >= win.first && d <= win.last
                                                          && !(e.from != null && d < e.from));
+    // A goalie's expected starts over his nights, back-to-backs counted.
+    const startsOn = (e, ds) => ds.reduce((a, d) => a + (e.chance && e.chance[d] != null ? e.chance[d] : e.share), 0);
     for (const i of nowIdx) {
       contrib[i] = nowTotal - sum(pts(nowIdx.filter((j) => j !== i)));
       days[i] = nightsFor(E(i));
       games[i] = days[i].length;
+      if (E(i).share != null) starts[i] = startsOn(E(i), days[i]);
     }
     const on = new Map();
     for (const i of afterIdx) {
       for (const d of nightsFor(E(i))) { if (!on.has(d)) on.set(d, []); on.get(d).push(E(i)); }
     }
-    const base = new Map([...on].map(([d, t]) => [d, nightPoints(t, shape)]));
+    const base = new Map([...on].map(([d, t]) => [d, nightPoints(t, shape, d)]));
     const held = new Set(afterIdx);
     for (const p of P) {
       if (state.gone.has(p.i) || held.has(p.i)) continue;
@@ -2818,9 +2907,10 @@ table.rtable tr.bench td.slot { color: var(--faint); }
       const nights = nightsFor(e);
       p.wgames = nights.length;
       p.wdays = nights;
-      p.win = nights.reduce((a, d) => a + nightPoints((on.get(d) || []).concat([e]), shape) - (base.get(d) || 0), 0);
+      p.wstarts = e.share != null ? startsOn(e, nights) : null;
+      p.win = nights.reduce((a, d) => a + nightPoints((on.get(d) || []).concat([e]), shape, d) - (base.get(d) || 0), 0);
     }
-    return { win, weeks, nowTotal, afterTotal: sum(after), contrib, games, days, nights };
+    return { win, weeks, nowTotal, afterTotal: sum(after), contrib, games, days, starts, nights };
   }
 
   // The rate the lineup uses: the updated one once he has played, marked with
@@ -2836,6 +2926,12 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     return `<span title="Preseason ${pre.toFixed(2)}, updated after ${p.ros.seen} ${isGoalie(p) ? "starts" : "games"}"
       class="${Math.abs(d) < 0.05 ? "" : d > 0 ? "gain" : "loss"}">${txt}${unit}${arrow}</span>`;
   };
+  // His team's games in the window, and for a goalie the starts expected of
+  // them, back-to-backs counted.
+  const gamesCell = (n, ds, st) => st == null
+    ? `<td class="dim" title="${dayList(ds)}">${n}</td>`
+    : `<td class="dim" title="Expected starts of his team's ${n} games, back-to-backs counted: ${dayList(ds)}">${
+      st.toFixed(1)} of ${n}</td>`;
   const restCell = (p) => (p.ros ? `<span title="Rest of the season: ${fmt0(p.ros.p10)} to ${fmt0(p.ros.p90)} (10th to 90th), over about ${fmt0(p.ros.games)} ${isGoalie(p) ? "starts" : "games"}">${fmt0(p.ros.ros)}</span>` : "—");
 
   function drawSeason() {
@@ -2849,6 +2945,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     const sc = seasonNow;
     if (!sc) { el.innerHTML = `<p class="empty">The season's schedule has no games left.</p>`; return; }
     const s = state.season;
+    const span = spanOf(sc.win);
     const opts = [1, 2, 3, 4].map((n) => `<option value="${n}" ${n === s.weeks ? "selected" : ""}>${
       n === 1 ? "this week" : `this week + ${n - 1}`}</option>`).join("");
     const src = league.source === "server"
@@ -2896,17 +2993,20 @@ table.rtable tr.bench td.slot { color: var(--faint); }
       const p = P[i];
       const out = i in s.out;
       const label = out ? (s.out[i] ? `Out to ${shortDate(s.out[i])}` : "Out") : "Out";
+      const kept = s.keep.includes(p.id);
       return `<tr data-i="${i}"><td class="left">${who(p)}</td>
-        <td class="dim" title="${dayList(sc.days[i] || [])}">${sc.games[i] ?? 0}</td><td class="mval">${(sc.contrib[i] ?? 0).toFixed(1)}</td>
+        ${gamesCell(sc.games[i] ?? 0, sc.days[i] || [], sc.starts[i])}<td class="mval">${(sc.contrib[i] ?? 0).toFixed(1)}</td>
         <td class="dim">${rateLabel(p)}</td><td class="dim">${soFar(p)}</td>
         <td class="acts"><button class="mini warn" data-out="${i}" aria-pressed="${out}"
             title="Out of my lineup until the date, or until cleared">${label}</button>
+          <button class="mini" data-keep="${i}" aria-pressed="${kept}"
+            title="Never offered as a drop in Best moves">Keep</button>
           <button class="mini" data-drop="${i}" aria-pressed="${s.drops.includes(i)}">Drop</button></td></tr>`;
     }).join("");
 
     const fa = visible().filter((p) => !state.gone.has(p.i) && p.win > -1e8);
     const faRows = fa.slice(0, 80).map((p) => `<tr data-i="${p.i}"><td class="left">${who(p, true)}</td>
-        <td class="dim" title="${dayList(p.wdays)}">${p.wgames}</td><td class="mval">${p.win.toFixed(1)}</td><td class="dim">${rateLabel(p)}</td>
+        ${gamesCell(p.wgames, p.wdays, p.wstarts)}<td class="mval">${p.win.toFixed(1)}</td><td class="dim">${rateLabel(p)}</td>
         <td class="dim">${soFar(p)}</td>
         <td class="mval">${restCell(p)}</td><td class="vorp ${p.vorp < 0 ? "neg" : ""}">${signed(p.vorp)}</td>
         <td class="acts"><button class="mini" data-add="${p.i}" aria-pressed="false">Add</button>
@@ -2914,44 +3014,52 @@ table.rtable tr.bench td.slot { color: var(--faint); }
 
     const bestPanel = (() => {
       const stale = bestMoves && bestMoves.key !== bestKey();
-      const head = `<div class="bhead"><h3>Best moves for this window</h3>
+      const posChips = ADD_POS.map((x) => `<button class="mini" data-addpos="${x}"
+        aria-pressed="${s.addPos.includes(x)}" title="Look for adds at ${x}">${x}</button>`).join("");
+      const head = `<div class="bhead"><h3>Best moves, ${span}</h3>
+        <span class="addpos">Add from ${posChips}</span>
         <button class="btn" id="sbest">${bestMoves ? "Find again" : "Find the best moves"}</button>
-        ${stale ? `<span class="stale">Your roster, the window or the filters changed since</span>` : ""}</div>`;
+        ${stale ? `<span class="stale">Your roster, the look-ahead or the filters changed since</span>` : ""}</div>`;
       if (!bestMoves) {
-        return `<div class="best">${head}<p class="rnote">Every player you could drop against every free agent the
-          filters show, each swap priced as the change in your lineup's expected points over the window.</p></div>`;
+        return `<div class="best">${head}<p class="rnote">Every player you could drop against every free agent at
+          those positions, each swap priced as the expected points it adds to your lineup ${span}, and over the rest of
+          the season. The team filter and the search apply; <b>Keep</b> on your roster holds a player out of the
+          drops.</p></div>`;
       }
       const rows = bestMoves.list.map((m, k) => {
         const d = P[m.drop], a = P[m.add];
         return `<tr><td>${k + 1}</td>
           <td class="who">\u2212 ${d.n} <span class="psub">${eligible(d).join("/")} · ${d.t}</span></td>
           <td class="who">+ ${a.n}${isExtra(a) ? XBADGE : ""} <span class="psub">${eligible(a).join("/")} · ${a.t}</span></td>
-          <td class="${tone(m.gain)}" title="The add brings +${m.adds.toFixed(1)} after the drop; the drop costs ${m.loses.toFixed(1)}">${signed1(m.gain)}</td>
-          <td class="${tone(m.season)}" title="From today to the end of the season, this window included">${signed1(m.season)}</td>
+          <td class="${tone(m.gain)}" title="Points your lineup gains ${bestMoves.span}: ${a.n} brings +${m.adds.toFixed(1)}, losing ${d.n} costs ${m.loses.toFixed(1)}">${signed1(m.gain)}</td>
+          <td class="${tone(m.season)}" title="Points your lineup gains from today to the end of the season, ${bestMoves.span} included">${signed1(m.season)}</td>
           <td><button class="mini" data-try="${m.drop},${m.add}">Try</button></td></tr>`;
       }).join("");
       return `<div class="best">${head}
-        ${bestMoves.list.length ? `<table class="stable"><thead><tr><th>#</th><th class="left">Drop</th>
-          <th class="left">Add</th><th>This window</th><th>Rest of season</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
-          : `<p class="rnote">No single swap adds points over this window without costing you over the season.</p>`}
-        <p class="rnote">Ranked by what each adds to your lineup this window, among swaps that do not cost you over the
+        ${bestMoves.list.length ? `<table class="stable"><thead>
+          <tr><th colspan="3"></th><th colspan="2" class="grp">Points the swap adds to your lineup</th><th></th></tr>
+          <tr><th>#</th><th class="left">Drop</th><th class="left">Add</th><th>${bestMoves.span}</th>
+          <th>Rest of season</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+          : `<p class="rnote">No single swap adds points ${bestMoves.span} without costing you over the season.</p>`}
+        <p class="rnote">Ranked by the points each adds ${bestMoves.span}, among swaps that do not cost you over the
           rest of the season${bestMoves.hurt ? ` - ${bestMoves.hurt} that would, like dropping a regular in a week his
-          team plays once, are left out` : ""}. From ${bestMoves.pool} free agents under the current filters; players
-          marked out are not offered as drops. Yahoo allows three adds a week.</p></div>`;
+          team plays once, are left out` : ""}. From ${bestMoves.pool} free agents at ${s.addPos.join(", ")} (the team
+          filter and the search apply); players marked out${bestMoves.kept ? `, and the ${bestMoves.kept} you keep,` : ""}
+          are not offered as drops. Yahoo allows three adds a week.</p></div>`;
     })();
 
     el.innerHTML = bar + scen + bestPanel + `<h3>My roster</h3>${offNote}
       <table class="rtable"><thead><tr><th class="left">Player</th>
-        <th title="His team's games in the window, from when he can play">Games</th>
-        <th title="Expected points my lineup loses over the window without him">Worth</th>
+        <th title="His team's games ${span}, from when he can play">Games</th>
+        <th title="Expected points my lineup loses ${span} without him">Worth</th>
         <th title="The model's projected points a game (a start, for a goalie)">Rate</th>
         <th title="This season so far: games and points a game">So far</th><th></th></tr></thead>
         <tbody>${mineRows}</tbody></table>
       <h3>Free agents</h3>
       <p class="rnote">Position, team and search filters apply; sort by <b>Adds</b> for what each would add to my lineup
-        over the window${s.drops.length ? ", after the drops above" : ""}. Showing ${Math.min(80, fa.length)} of ${fa.length}.</p>
+        ${span}${s.drops.length ? ", after the drops above" : ""}. Showing ${Math.min(80, fa.length)} of ${fa.length}.</p>
       <table class="rtable"><thead><tr><th class="left">Player</th><th>Games</th>
-        <th title="Expected points he would add to my lineup over the window">Adds</th>
+        <th title="Expected points he would add to my lineup ${span}">Adds</th>
         <th title="The model's projected points a game (a start, for a goalie)">Rate</th>
         <th title="This season so far: games and points a game">So far</th>
         <th title="Expected points from here to the end of the season, from the model with this season's games folded in">Rest</th><th>Value</th><th></th></tr></thead>
@@ -3031,6 +3139,15 @@ table.rtable tr.bench td.slot { color: var(--faint); }
         saveLeague();
       } else if (b.id === "srefresh") { startRefresh(); return; }
       else if (b.id === "sbest") { findBestMoves(); drawSeason(); return; }
+      else if (b.dataset.keep != null) {
+        const id = P[Number(b.dataset.keep)].id;
+        s.keep = s.keep.includes(id) ? s.keep.filter((x) => x !== id) : [...s.keep, id];
+      } else if (b.dataset.addpos != null) {
+        const x = b.dataset.addpos;
+        const next = s.addPos.includes(x) ? s.addPos.filter((y) => y !== x) : ADD_POS.filter((y) => y === x || s.addPos.includes(y));
+        if (!next.length) return;  // at least one position to look at
+        s.addPos = next;
+      }
       else if (b.dataset.try != null) {
         const [d, a] = b.dataset.try.split(",").map(Number);
         s.drops = [d];
@@ -3154,6 +3271,9 @@ table.rtable tr.bench td.slot { color: var(--faint); }
         drops: (s.drops || []).filter(ok), adds: (s.adds || []).filter(ok),
         out: Object.fromEntries(Object.entries(s.out || {}).filter(([i]) => ok(Number(i)))),
         perf: ["all", "mine", "fa"].includes(s.perf) ? s.perf : "all",
+        addPos: Array.isArray(s.addPos) && s.addPos.some((x) => ADD_POS.includes(x))
+          ? ADD_POS.filter((x) => s.addPos.includes(x)) : [...ADD_POS],
+        keep: Array.isArray(s.keep) ? s.keep.filter((x) => Number.isFinite(x)) : [],
       };
     }
     if (Number.isFinite(payload.offMax)) state.offMax = payload.offMax;

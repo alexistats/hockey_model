@@ -72,6 +72,7 @@ python -m hockey.export artifacts/board_v2    # replacement level, value, tiers
 python -m hockey.serve.room --mocks ../draft_bot/artifacts/mocks   # the room model
 python scripts/trace_cost_of_waiting.py <mock dir> --holdout      # check it on a mock
 python scripts/build_draft_ui.py artifacts/board_v2   # the single-file draft page
+python scripts/measure_back_to_backs.py       # goalie starts on back-to-backs, held out
 python -m hockey.serve.season seed config/draft_2026.csv --me "Alexis's Amazing Team" \
     --add NAME --drop NAME --injured "NAME=YYYY-MM-DD"  # the season's league file
 python -m hockey.serve --board artifacts/board_v3 \

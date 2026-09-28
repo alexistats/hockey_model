@@ -444,12 +444,16 @@ back; opened from disk, it falls back to its own draft marks. A Yahoo sync can
 later write the same file.
 
 **Best moves** ranks every single swap - each player of mine who could go against
-every free agent the filters show - by what it adds to my lineup over the window,
+every free agent at the positions its own chips allow (the team filter and search
+apply) - by what it adds to my lineup over the window,
 but only among swaps that do not cost me over the rest of the season: priced on the
 window alone, it recommended dropping Stützle in the week Ottawa plays once. Each
 swap that gains in the window is priced again from today to the season's end, and
 one that loses there is left out and counted. Players marked out are not offered as
-drops, since an injured-reserve slot frees nothing a pickup could use. The page's
+drops, since an injured-reserve slot frees nothing a pickup could use, and nor are
+players marked **Keep** - where my read of a player differs from the model's, the
+model does not get to spend him. Both were asked for when Levi, priced by the model
+as Edmonton's third goalie, filled the top ten with his own replacements. The page's
 `bestSwaps` is held to a brute force that recomputes both windows whole for every
 pair, in `tests/test_season.py`.
 
@@ -461,6 +465,51 @@ buttons reached the file.
 `night_points` and `window_points` in `serve/schedule.py` are the reference;
 the page's copies sit in its schedule block and `tests/test_season.py` holds
 them together under Node on random rosters with goalies and injured players.
+
+## A goalie's start is a night, not a season average
+
+A goalie used to start each of his team's nights with the same chance, his season
+share. The second night of a back-to-back does not work that way. Measured by
+`scripts/measure_back_to_backs.py` on 643 goalie-seasons spent on one team, 2018-19
+to 2025-26 without 2020-21:
+
+```
+season share    ordinary night   first of a back-to-back   second of one
+ 0.06                0.047               0.064                  0.132
+ 0.28                0.235               0.285                  0.447
+ 0.42                0.410               0.426                  0.457
+ 0.58                0.621               0.564                  0.391
+ 0.71                0.786               0.706                  0.366
+```
+
+A starter takes 79% of ordinary nights and 37% of second nights; his backup takes
+the difference. Teams have about twelve back-to-backs each in 2026-27.
+`start_chances` bends a goalie's share night by night: the second night of one
+goes by the curve in `BACK_TO_BACK_SECOND`, the first as the season does, and the
+other nights make up the difference so his season total is unchanged - which is
+also what was measured, a starter gaining on ordinary nights what he gives up on
+second ones. Fitted on the seasons before 2025-26 and scored on it, with each
+goalie's actual share so that only the kind of night is being tested:
+
+```
+                                   flat share   back-to-backs counted
+Brier, second nights                 0.235          0.201
+Brier, every night                   0.172          0.165
+a starter's week with one (starts)   +0.14 too many   -0.04
+a backup's week with one             -0.07 too few    -0.00
+weekly starts, root mean sq. error   0.671          0.668
+```
+
+The weekly error barely moves, because who is hurt or hot swamps everything else
+in one goalie's week; what the curve removes is a bias, and a bias is what a
+streaming decision between a starter and a backup turns on. The page shows a
+goalie's expected starts of his team's games in the window, and every price on
+the Season tab - the week, the adds, Best moves - uses them.
+
+Two goalies of mine from one team were also scored as if both could start the
+same night. A team starts one goalie, so `night_points` now treats each team's
+goalies as one draw - none of them, or exactly one - which is what a handcuff is
+worth.
 
 ## The season so far is read against the model, not averaged into it
 

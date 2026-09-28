@@ -33,6 +33,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date
+from itertools import product
 
 import pandas as pd
 
@@ -231,16 +232,86 @@ def week_window(weeks: list[dict], first: int, count: int) -> tuple[date, date] 
     )
 
 
-def night_points(tonight: list[dict], shape: dict[str, int]) -> float:
+# A goalie's chance to start the second night of a back-to-back, against his
+# share of his team's starts over the season: (share, chance) knots, straight
+# lines between them and flat past the last. Measured by
+# scripts/measure_back_to_backs.py on 643 goalie-seasons spent on one team,
+# 2018-19 to 2025-26 without 2020-21: a starter with 71% of his team's starts
+# takes 37% of its second nights, a backup at 28% takes 45%, a third goalie at 6%
+# takes 13%. Fitted on the seasons before 2025-26 and scored on it, the curve cut
+# the error on second nights by a seventh (Brier 0.235 to 0.201) and took the
+# bias out of a starter's week with a back-to-back: a flat share gave him 0.14
+# starts too many, this 0.04 too few. The highest band, four goalie-seasons over
+# 80%, is too thin to use.
+BACK_TO_BACK_SECOND = (
+    (0.0, 0.0),
+    (0.063, 0.132),
+    (0.275, 0.447),
+    (0.42, 0.457),
+    (0.576, 0.391),
+    (0.712, 0.366),
+)
+
+
+def night_kinds(days, date_of=None) -> dict:
+    """Each of a team's nights: "second" when it played the day before, "first"
+    when it plays the day after, and "rest" otherwise. `date_of` turns a
+    calendar day into its date when days are indices; by default they are
+    dates."""
+    to_date = date_of or (lambda d: d)
+    ordinal = {d: date.fromisoformat(str(to_date(d))[:10]).toordinal() for d in days}
+    ordered = sorted(days, key=lambda d: ordinal[d])
+    kinds = {}
+    for j, d in enumerate(ordered):
+        if j and ordinal[d] - ordinal[ordered[j - 1]] == 1:
+            kinds[d] = "second"
+        elif j + 1 < len(ordered) and ordinal[ordered[j + 1]] - ordinal[d] == 1:
+            kinds[d] = "first"
+        else:
+            kinds[d] = "rest"
+    return kinds
+
+
+def second_night_chance(share: float) -> float:
+    knots = BACK_TO_BACK_SECOND
+    for (x0, y0), (x1, y1) in zip(knots, knots[1:], strict=False):
+        if share <= x1:
+            return y0 + (y1 - y0) * (max(share, x0) - x0) / (x1 - x0)
+    return knots[-1][1]
+
+
+def start_chances(share: float, days, date_of=None) -> dict:
+    """A goalie's chance to start each of his team's nights: his season share,
+    bent by back-to-backs and held to the same season total. The second night of
+    one goes by `BACK_TO_BACK_SECOND`, the first goes as the season does, and the
+    other nights make up the difference - a starter gains a little on ordinary
+    nights what he gives up on second ones, which is also what was measured."""
+    kinds = night_kinds(days, date_of)
+    n = {k: sum(1 for v in kinds.values() if v == k) for k in ("rest", "first", "second")}
+    second = second_night_chance(share)
+    rest = share + n["second"] * (share - second) / n["rest"] if n["rest"] else share
+    if rest > 1:
+        rest, second = 1.0, share + n["rest"] * (share - 1) / n["second"]
+    elif rest < 0:
+        rest, second = 0.0, share + n["rest"] * share / n["second"]
+    chance = {"rest": rest, "first": share, "second": second}
+    return {d: chance[k] for d, k in kinds.items()}
+
+
+def night_points(tonight: list[dict], shape: dict[str, int], day=None) -> float:
     """One night's expected lineup points, for the players on the ice tonight.
 
-    Each entry is {"id", "rate", "elig"} and, for a goalie, "share". A skater
-    plays every game his team does, and the skater slots are set as a manager
-    sets them (`lineup`) on per-game rates. A goalie starts only his share of
-    his team's games, so the goalie slots are an expectation over which of mine
-    start tonight: every combination of starters, weighted by its chance, with
-    the slots taking the best of those who start. A night rarely has more than
-    three of my goalies on it, so enumerating is cheap and exact.
+    Each entry is {"id", "rate", "elig"} and, for a goalie, "share" and "team",
+    with "chance" - his chance on each night, `start_chances` - when back-to-backs
+    are counted; `day` picks tonight's. A skater plays every game his team does,
+    and the skater slots are set as a manager sets them (`lineup`) on per-game
+    rates. A goalie starts only some of his team's games, so the goalie slots are
+    an expectation over which of mine start tonight: every combination of
+    starters, weighted by its chance, the slots taking the best of those who
+    start. A team starts one goalie a night, so two of mine from one team never
+    both start: each team is one draw, none of them or exactly one. A night
+    rarely has more than three of my goalies on it, so enumerating is exact and
+    cheap.
     """
     skaters = [p for p in tonight if p.get("share") is None]
     goalies = [p for p in tonight if p.get("share") is not None]
@@ -251,16 +322,23 @@ def night_points(tonight: list[dict], shape: dict[str, int]) -> float:
 
     slots = int(shape.get("G", 0))
     if slots and goalies:
-        for mask in range(1 << len(goalies)):
-            chance, up = 1.0, []
-            for j, g in enumerate(goalies):
-                if mask >> j & 1:
-                    chance *= g["share"]
-                    up.append(g["rate"])
-                else:
-                    chance *= 1.0 - g["share"]
+        teams: dict = {}
+        for g in goalies:
+            chance = g.get("chance")
+            p = chance.get(day, g["share"]) if chance and day is not None else g["share"]
+            teams.setdefault(g.get("team", f"#{g['id']}"), []).append((p, g["rate"]))
+        draws = []
+        for group in teams.values():
+            total = sum(p for p, _ in group)
+            k = 1.0 / total if total > 1 else 1.0
+            draws.append([(max(0.0, 1.0 - total * k), None)] + [(p * k, r) for p, r in group])
+        for combo in product(*draws):
+            chance = 1.0
+            for p, _ in combo:
+                chance *= p
             if chance:
-                points += chance * sum(sorted(up, reverse=True)[:slots])
+                up = sorted((r for _, r in combo if r is not None), reverse=True)
+                points += chance * sum(up[:slots])
     return points
 
 
@@ -269,8 +347,9 @@ def window_points(
 ) -> dict:
     """Expected lineup points each night from `first` to `last`, inclusive.
 
-    Entries are {"id", "team", "rate", "elig"} plus "share" for a goalie and an
-    optional "from", the first night he can play - a return date from injury.
+    Entries are {"id", "team", "rate", "elig"} plus "share" for a goalie, his
+    "chance" on each night when back-to-backs are counted, and an optional
+    "from", the first night he can play - a return date from injury.
     A roster's week is the sum of its nights, and what a move is worth is the
     difference between two rosters' sums over the same nights: that is the
     question a schedule tool that shows only games cannot answer, because a
@@ -282,4 +361,4 @@ def window_points(
         for d in plays.get(e["team"], ()):
             if first <= d <= last and (e.get("from") is None or d >= e["from"]):
                 on.setdefault(d, []).append(e)
-    return {d: night_points(tonight, shape) for d, tonight in sorted(on.items())}
+    return {d: night_points(tonight, shape, d) for d, tonight in sorted(on.items())}
