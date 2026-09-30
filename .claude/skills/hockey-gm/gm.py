@@ -597,6 +597,8 @@ def cmd_resolve(args):
 
 
 def main():
+    # Names like Stützle, whatever launched us (a scheduled task, Git Bash, a pipe).
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(prog="gm.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("stats")

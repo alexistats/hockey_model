@@ -1,6 +1,6 @@
 ---
 name: hockey-gm
-description: In-season manager for the user's Yahoo fantasy hockey team (league 2270, this repo). Add/drop, stream and trade analysis in the league's scoring; recording roster moves and pasted Yahoo transaction logs in the league file; rebuilding the draft page and running its server; the morning and evening gamedaytweets.com news catch-up; and the decision log. Use for any question about adds, drops, streams, trades, lineups, goalie starts, injuries or news for this team, or when the user pastes a Yahoo transaction log.
+description: In-season manager for the user's Yahoo fantasy hockey team (league 2270, this repo). Add/drop, stream and trade analysis in the league's scoring; recording roster moves and pasted Yahoo transaction logs in the league file; rebuilding the draft page and running its server; the scheduled gamedaytweets.com news catch-up (6 am, 5 pm, 11 pm) and its digests; and the decision log. Use for any question about adds, drops, streams, trades, lineups, goalie starts, injuries or news for this team, or when the user pastes a Yahoo transaction log.
 ---
 
 # hockey-gm: running the team in season
@@ -83,7 +83,7 @@ Caveats that have bitten before:
 
 ## Routines
 
-### Morning and evening: news catch-up
+### News catch-up (by hand, or reading the scheduled digests)
 
 1. `news.py`: new tweets since the bookmark, flagged when they name my players or
    the watch list, or concern my players' teams (lines, power play, goalie starts,
@@ -97,6 +97,41 @@ Caveats that have bitten before:
    and guessed starters), `/news`.
 4. Update `watchlist.json` when a plan adds or drops a name, and log anything
    decided.
+
+### Scheduled catch-ups (they run without a session)
+
+Windows Task Scheduler runs three tasks, local time, via `scheduled/run_catchup.ps1`:
+`hockey-gm news (morning)` at 06:00 (overnight news, what to watch today),
+`(evening)` at 17:00 (before games lock: starters, lines, scratches) and `(night)` at
+23:00 (after the games: injuries, post-game news, tomorrow). Each run:
+
+1. `news.py` fetches from the bookmark. This is deterministic; the bookmark moves here.
+2. A fresh `claude -p` session reads that output with this skill, the week's plan and
+   the decision log. It replies with a digest. Its permissions are in
+   `scheduled/catchup_settings.json`: read, look up, run `gm.py`, never edit. It runs
+   with no connectors or MCP servers, and its prompt is `scheduled/catchup_prompt.md`.
+3. The digest goes to `artifacts/season/news/digests/YYYY-MM-DD_HHMM-<slot>.md`, next to
+   the raw fetch (`.news.txt`), and a desktop notification shows its headline. Every
+   run logs a line to `artifacts/season/news/runs.log`.
+
+The sessions are named `hockey-gm-<slot>-<stamp>`, so `claude --resume` can pick one
+up to talk it through.
+
+Each task has two triggers: its daily time, and logging on (two minutes after). The
+runner's `-At` guard runs a slot only once its time has passed today, and only if
+no digest from today at or after that time exists. So a logon before 06:00 waits
+for the daily run, a logon after a missed run catches it up, and a second trigger
+the same day does nothing. Logon delays are staggered (2, 6, 10 minutes), so overdue
+slots run in order. A missed start is also retried as soon as possible.
+Scheduled fetches page back up to 15 pages, a few days of news, so a long absence
+still reaches the bookmark. Run by hand with `-Force` to skip the guard. Change the
+times or remove the tasks with `scheduled/install_tasks.ps1`
+(`-Morning 06:30 -Evening 17:30 -Night 23:30`, or `-Uninstall`).
+
+**At the start of an interactive session**, list `artifacts/season/news/digests/` and
+read the digests since the user's last visit. Say what is still actionable, and
+don't re-report what's done. Run `news.py` yourself only for news newer than the
+last digest; it shares the same bookmark.
 
 ### A move the user made or wants to make
 

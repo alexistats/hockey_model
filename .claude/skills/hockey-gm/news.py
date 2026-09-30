@@ -161,6 +161,8 @@ def flag(t: dict, people, last_counts, my_teams) -> tuple[list[str], list[str]]:
 
 
 def main():
+    # Names like Stützle, whatever launched us (a scheduled task, Git Bash, a pipe).
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(prog="news.py")
     ap.add_argument("--pages", type=int, default=6, help="most pages to read back")
     ap.add_argument("--dry-run", action="store_true", help="leave the bookmark where it is")
