@@ -75,6 +75,16 @@ goalies:
     starts: 28
     starts_sd: 10
 
+  # Named St. Louis's starter in camp (2026) and started the opener. The walks
+  # split the net 43 / 40.5 with Binnington, last season's 43 / 39 carried
+  # forward; a clear starter with a veteran behind him is nearer 55 of 84. The
+  # sd sits between a starter's and a tandem's: his most starts in a season is
+  # 43, and Binnington started 54 the year before, so the job could be lost.
+  - name: "Joel Hofer"
+    nhl_id: 8480981
+    starts: 55
+    starts_sd: 8
+
 teams:
   # - team: "BOS"
   #   shots_adjust: 0.0
