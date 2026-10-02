@@ -459,7 +459,7 @@ def cmd_scan(args):
 # --- the transaction log ----------------------------------------------------------
 PLAYER = re.compile(
     r"^(?P<name>.+?) (?P<team>[A-Z]{2,3}) - (?P<pos>(?:C|LW|RW|D|G)(?:,(?:C|LW|RW|D|G))*)"
-    r"(?: (?P<status>[A-Z+]{1,5}))?$"
+    r"(?: (?P<status>[A-Z+-]{1,6}))?$"  # IR, IR+, DTD, O, NA, IR-LT
 )
 ACTIONS = {"Free Agent": "add", "Waiver": "add", "To Waivers": "drop", "To Free Agent": "drop"}
 STAMP = re.compile(

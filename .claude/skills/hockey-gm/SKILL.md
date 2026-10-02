@@ -43,6 +43,9 @@ managers' names out of anything committed** (this folder, `config/`, docs).
 - **One dedicated stream spot**; the rest of the roster are holds. Never suggest
   dropping a core player for a one-week stream. Fading a week for real upside is
   fine when the numbers are close.
+- **Price bottom-of-roster adds on the next two or three weeks, not the season.**
+  An add that low in the lineup rarely sticks, so a season total oversells it.
+  Season value is for holds and trades.
 - **Never guess an identity.** Names become NHL ids by exact match, with the team
   checked against current rosters; a miss is reported, not filled in.
 - **Log decisions.** Every move or plan change gets an entry in
@@ -50,8 +53,8 @@ managers' names out of anything committed** (this folder, `config/`, docs).
 
 ## Tools (`.claude/skills/hockey-gm/`)
 
-Run from the project root with `.venv/Scripts/python.exe` (and
-`PYTHONIOENCODING=utf-8` in Git Bash).
+Run from the project root with `.venv/Scripts/python.exe`. The scripts set UTF-8
+output themselves, so no environment variable is needed.
 
 - `gm.py stats NAME...`: last two seasons and this one in league scoring (per game,
   per start for goalies), status (mine/taken/free) and the model's rate. The

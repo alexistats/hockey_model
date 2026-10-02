@@ -33,6 +33,9 @@ Set-Location $root
 $env:PYTHONIOENCODING = "utf-8"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = New-Object System.Text.UTF8Encoding $false
+# `*>` below goes through Out-File, which writes UTF-16 in Windows PowerShell 5.1,
+# and the session's Read tool then sees every character spaced out.
+$PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'
 
 $stamp = Get-Date -Format "yyyy-MM-dd_HHmm"
 $newsDir = Join-Path $root "artifacts\season\news"

@@ -7,7 +7,10 @@
       "Grep",
       "WebSearch",
       "WebFetch(domain:www.gamedaytweets.com)",
-      "Bash(.venv/Scripts/python.exe .claude/skills/hockey-gm/gm.py *)"
+      "Bash(.venv/Scripts/python.exe .claude/skills/hockey-gm/gm.py *)",
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe .claude/skills/hockey-gm/gm.py *)",
+      "PowerShell(.venv/Scripts/python.exe .claude/skills/hockey-gm/gm.py *)",
+      "PowerShell(.venv\\Scripts\\python.exe .claude\\skills\\hockey-gm\\gm.py *)"
     ],
     "deny": [
       "Edit",

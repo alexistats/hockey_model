@@ -10,7 +10,7 @@ Use the hockey-gm skill: read .claude/skills/hockey-gm/SKILL.md first. The news 
    - injuries, scratches and returns;
    - call-ups, waivers and trades that touch my players, the watch list, or a planned move or trigger.
    {SLOT_FOCUS}
-4. If a planned move or trigger is affected, you may price it with `.venv/Scripts/python.exe .claude/skills/hockey-gm/gm.py` (fits, swap, stats). Use exactly that command prefix, and at most a few runs. The database may be down; if a command fails, say so and move on.
+4. If a planned move or trigger is affected, you may price it with `.venv/Scripts/python.exe .claude/skills/hockey-gm/gm.py` (fits, swap, stats). Use exactly that command prefix, run from the working directory with no `cd` and no environment variables in front (UTF-8 is already set), and at most a few runs. The database may be down; if a command fails, say so and move on.
 5. Do not edit any files. Never make or suggest roster moves as done; the user makes moves in Yahoo. Don't mention tools, connectors or setup in the digest; it is about hockey only.
 
 Reply in Markdown, under 250 words:
