@@ -45,7 +45,13 @@ managers' names out of anything committed** (this folder, `config/`, docs).
   fine when the numbers are close.
 - **Price bottom-of-roster adds on the next two or three weeks, not the season.**
   An add that low in the lineup rarely sticks, so a season total oversells it.
-  Season value is for holds and trades.
+- **Trades and holds get a full-season analysis; early weeks are context only.**
+  The season delta night by night at the preseason posterior's rates and at the
+  page's; the delta over joint posterior draws of the players' rates (mean, 10th to
+  90th percentile, P that it helps); where it comes from by month; and the last weeks
+  with games, where Yahoo's playoffs fall. A rest-of-season rate after a game or two
+  can jump on one outlier game (the category update is Poisson), so until a player
+  has about 10 games lean on the preseason posterior and say when the two disagree.
 - **Never guess an identity.** Names become NHL ids by exact match, with the team
   checked against current rosters; a miss is reported, not filled in.
 - **Log decisions.** Every move or plan change gets an entry in
