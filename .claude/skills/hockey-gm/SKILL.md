@@ -13,8 +13,11 @@ managers' names out of anything committed** (this folder, `config/`, docs).
 
 ## The league
 
-- Yahoo league 2270, 14 teams, one-year league (no keepers). My team: `me` in the
-  league file. **3 adds a week.**
+- Yahoo league 2270, 14 teams, one-year league (no keepers), head-to-head points.
+  My team: `me` in the league file (the Yahoo name can change; a log showing "my"
+  drops under a new name means update `me`). **3 adds a week, next-day:** an add made
+  today joins tomorrow, so a Monday add plays Tuesday at the earliest. Dropped players
+  go to waivers, so claiming one takes longer.
 - Lineup: C 2, LW 2, RW 2, D 4, G 2, set daily; 5 bench; IR slots.
 - Scoring (from `config/league_2270.yaml`, never hard-code): skaters G 5, A 3, +/-
   0.5, PPP 0.5, SHP 1.5, SOG 0.5, **HIT 0.5, BLK 0.5**; goalies GS 1, W 6, GA −1.5,
