@@ -55,6 +55,12 @@ managers' names out of anything committed** (this folder, `config/`, docs).
   with games, where Yahoo's playoffs fall. A rest-of-season rate after a game or two
   can jump on one outlier game (the category update is Poisson), so until a player
   has about 10 games lean on the preseason posterior and say when the two disagree.
+- **Trade offers must look fair to the other manager.** Draft position (the room
+  model's ADP, the page's `o`) is a proxy early on; as games pile up, weight what
+  players produce (last season's points a game and this season's pace). Check role
+  too: a sheltered player off the power play does not buy a 23-minute one.
+- **Trade targets:** the Season tab's Buy low list (strict: the rate may dip 0.05 at
+  most) and its player lookup for anyone the list misses.
 - **Never guess an identity.** Names become NHL ids by exact match, with the team
   checked against current rosters; a miss is reported, not filled in.
 - **Log decisions.** Every move or plan change gets an entry in
@@ -92,6 +98,12 @@ Caveats that have bitten before:
   a goalie suggestion.
 - **The free-agent pool is only as good as the league file.** Ask for the latest
   transaction log if it's been a few days.
+- **The lineup math has no roster limit.** It fills each night from everyone listed,
+  so a move that brings an active player for one on IR runs an 18-man roster. Add
+  the forced drop as another `--drop` (and remember players coming back from IR
+  force drops of their own). For trade value, count an injured player only over the
+  games after his return: Terry for Montour read +91 and even on value until both
+  were fixed (+76, and 87 against 115).
 
 ## Routines
 
@@ -167,8 +179,8 @@ last digest; it shares the same bookmark.
 - The server:
   `python -m hockey.serve --board artifacts/board_v3 --goalies artifacts/goalies_v2 --slot 4`
   on port 8899. Check with `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8899/ui`.
-  Restart it after the extras sheet changes: its own league saves validate ids
-  against the sheet it loaded at startup.
+  League saves re-read the extras sheet, so a player just added there (and the page
+  rebuilt) saves without a restart.
 - Started from Claude Code as a background task, the server gets killed when the
   machine is low on memory and the session is idle. Suggest the user run it in
   their own terminal; don't restart it unasked.
