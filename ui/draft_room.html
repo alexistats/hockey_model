@@ -304,6 +304,11 @@ table.stable th.grp { text-align: center; font-family: var(--sans); font-size: 1
 .best td.who { text-align: left; font-family: var(--sans); }
 .best .stale { font-size: 11px; color: var(--amber); }
 .perfbar { display: flex; align-items: center; gap: 10px; margin: 16px 0 6px; }
+.lookup { margin: 4px 0 10px; }
+.lookup label { font-size: 12px; color: var(--slate); margin-right: 8px; }
+.lookup input { font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--edge); border-radius: 6px;
+  background: var(--surface); color: var(--ink); min-width: 220px; }
+.lookup table { margin-top: 6px; }
 .perfbar h3 { margin: 0; }
 .perf { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 @media (max-width: 760px) { .perf { grid-template-columns: 1fr; } }
@@ -1516,6 +1521,34 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     return out;
   }
   /* room:end */
+
+  /* buylow:begin - trade targets: skaters the in-season update rates at least as
+     well as it did before the season (a dip of 0.05 at most), whose points have not
+     come yet. Strict on purpose: a bigger dip catches players falling for real;
+     anyone else can be looked up by name (lookupMatch, below). Pure, so a
+     test can run it. Each player is { i, gp, pg, rate, pre }: games and points a
+     game so far, and the model's rate now and before the season. The points come
+     from goals and assists that run hot and cold; the update leans on what a few
+     games say more reliably - shots, hits, blocks - so a rate that holds or rises
+     while the points lag is the model saying they should come. */
+  function buyLow(players, { minGames = 2, minGap = 0.5, maxDrop = 0.05, top = 15 } = {}) {
+    return players
+      .filter((p) => p.gp >= minGames && p.rate - p.pre >= -maxDrop && p.rate - p.pg >= minGap)
+      .map((p) => ({ ...p, gap: p.rate - p.pg, up: p.rate - p.pre }))
+      .sort((a, b) => b.gap - a.gap || b.up - a.up)
+      .slice(0, top);
+  }
+
+  // Anyone, by name or team, accents ignored: "stutzle" finds Stützle. Each player
+  // is { i, n, t }; at most `top` back, names in order.
+  function lookupMatch(players, q, top = 12) {
+    const fold = (s) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+    const k = fold(q.trim());
+    if (k.length < 2) return [];
+    return players.filter((p) => fold(p.n).includes(k) || fold(p.t) === k)
+      .sort((a, b) => a.n.localeCompare(b.n)).slice(0, top);
+  }
+  /* buylow:end */
 
   // The seat that makes overall pick `number`.
   function seatOf(number) {
@@ -3063,7 +3096,7 @@ table.rtable tr.bench td.slot { color: var(--faint); }
         <th title="The model's projected points a game (a start, for a goalie)">Rate</th>
         <th title="This season so far: games and points a game">So far</th>
         <th title="Expected points from here to the end of the season, from the model with this season's games folded in">Rest</th><th>Value</th><th></th></tr></thead>
-        <tbody>${faRows}</tbody></table>` + perfSection();
+        <tbody>${faRows}</tbody></table>` + perfSection() + buyLowSection();
   }
 
   // A player's name cell: a team he has moved to, and ESPN's status if he is hurt.
@@ -3103,8 +3136,72 @@ table.rtable tr.bench td.slot { color: var(--faint); }
         <div><h4 class="cold">Below the model</h4><ol>${list(cold)}</ol></div></div>
       <p class="rnote">Points a game so far against the model's rate. Flagged when a player's total is in the outer tenth
         of what the model expected for his games: its uncertainty about his rate plus ordinary game-to-game swings, so a
-        good week rarely qualifies and forty games at the same pace usually does. The model itself only moves when it is
-        refit with this season's games.</p>`;
+        good week rarely qualifies and forty games at the same pace usually does. The model's rate moves too, through the
+        in-season update; Buy low, below, reads that.</p>`;
+  }
+
+  // A player's season against the model, as table cells: games and points a game so
+  // far, goals and assists, shots and hits plus blocks a game, the rate now with its
+  // change since the preseason, the gap between the two, and the rest of the season.
+  // Shared by the Buy low list and the player lookup; "—" where there is nothing yet.
+  const TREND_HEAD = `<th>So far</th><th title="Goals · assists">G · A</th>
+    <th title="Shots a game · hits plus blocks a game">Shots · H+B</th><th>Rate now</th><th>Gap</th><th>Rest</th>`;
+  function trendCells(p) {
+    const s = p.st, r = p.ros, sk = !isGoalie(p);
+    const rate = r ? r.rate : p.m / Math.max(p.g, 1e-6);
+    const up = r && r.pre_rate != null ? rate - r.pre_rate : null;
+    const c = (s && s.cats) || {};
+    const per = (n) => (n / s.gp).toFixed(1);
+    const signed2 = (x) => (x >= 0 ? "+" : "−") + Math.abs(x).toFixed(2);
+    const gap = s ? rate - s.pg : null;
+    return `<td title="${sk ? "Games" : "Starts"}, and points a ${sk ? "game" : "start"} so far">${s ? `${s.gp} · ${s.pg.toFixed(2)}` : "—"}</td>
+      <td title="Goals and assists so far">${s && sk ? `${c.goals || 0} · ${c.assists || 0}` : "—"}</td>
+      <td title="Shots a game, and hits plus blocks a game, so far">${s && sk ? `${per(c.sog || 0)} · ${per((c.hits || 0) + (c.blocks || 0))}` : "—"}</td>
+      <td title="The model's points a ${sk ? "game" : "start"} now${r && r.pre_rate != null ? `, and the change since before the season (${r.pre_rate.toFixed(2)})` : ""}">${rate.toFixed(2)}${up == null
+        ? "" : ` <span class="${tone(up)}">${signed2(up)}</span>`}</td>
+      <td class="${gap == null ? "" : tone(gap)}" title="The model's rate now, less his points a ${sk ? "game" : "start"} so far">${gap == null ? "—" : signed1(gap)}</td>
+      <td title="Expected points from here to the end of the season">${r ? Math.round(r.ros) : "—"}</td>`;
+  }
+
+  // Anyone on the page by name or team - mine, another team's or a free agent - with
+  // the same numbers, for the players no list catches.
+  function lookupTable() {
+    const q = state.season.lookup || "";
+    const hits = lookupMatch(P.map((p) => ({ i: p.i, n: p.n, t: p.t })), q);
+    if (!hits.length) return q.trim().length >= 2 ? `<p class="empty">No player matches.</p>` : "";
+    const mine = new Set(state.roster);
+    const owner = (i) => (mine.has(i) ? "Mine" : state.gone.has(i) ? "Taken" : "Free");
+    return `<table class="rtable"><thead><tr><th class="left">Player</th><th>Whose</th>${TREND_HEAD}</tr></thead><tbody>${
+      hits.map(({ i }) => `<tr data-i="${i}"><td class="left">${who(P[i])}</td><td>${owner(i)}</td>${trendCells(P[i])}</tr>`).join("")
+    }</tbody></table>`;
+  }
+
+  // Trade targets: other teams' skaters the in-season update still likes - its
+  // rate has held or risen since the preseason - while their points lag it. The
+  // reverse of a hot start the model does not buy, like a run of goals on few
+  // shots. The ranking is buyLow's; this only gathers the players and draws them.
+  function buyLowSection() {
+    const head = `<div class="perfbar"><h3>Buy low: trade targets</h3></div>`;
+    const lookup = `<div class="lookup"><label for="slookup">Look up any player</label>
+      <input id="slookup" type="search" placeholder="name or team" autocomplete="off"
+        value="${escapeHtml(state.season.lookup || "")}"><div id="slookup-res">${lookupTable()}</div></div>`;
+    if (!stats.loaded || !stats.games || !ros.loaded) {
+      return head + lookup + `<p class="empty">This needs the season stats and the in-season update.${CAN_FOLLOW
+        ? " Refresh stats once games have been played." : " Open this page from the draft server to refresh them."}</p>`;
+    }
+    const mine = new Set(state.roster);
+    const players = P.filter((p) => state.gone.has(p.i) && !mine.has(p.i) && !isGoalie(p) && p.st && updated(p)
+        && p.ros.pre_rate != null)
+      .map((p) => ({ i: p.i, gp: p.st.gp, pg: p.st.pg, rate: p.ros.rate, pre: p.ros.pre_rate }));
+    const rows = buyLow(players).map((x) => `<tr data-i="${x.i}"><td class="left">${who(P[x.i])}</td>${trendCells(P[x.i])}</tr>`).join("");
+    return head + lookup + (rows ? `<table class="rtable"><thead><tr><th class="left">Player</th>${TREND_HEAD}</tr></thead>
+        <tbody>${rows}</tbody></table>`
+      : `<p class="empty">No skater on another team fits yet.</p>`)
+      + `<p class="rnote">Skaters on other teams whose rate from the in-season update is at least what it was before the
+        season (within 0.05), while their points a game so far trail that rate by half a point or more, after two games or
+        more; sorted by the gap. Points come from goals and assists, which run hot and cold; the update leans on what a few
+        games say more reliably - shots, hits and blocks. Until about ten games it swings on those, so these are names to
+        ask about, not verdicts. Goalies are left out.</p>`;
   }
 
   function applyMoves() {
@@ -3163,6 +3260,12 @@ table.rtable tr.bench td.slot { color: var(--faint); }
     }
     const row = e.target.closest("tr[data-i], li[data-i]");
     if (row) { state.selected = Number(row.dataset.i); drawDetail(); }
+  });
+  // The lookup redraws only its own results, so the box keeps focus as you type.
+  seasonEl.addEventListener("input", (e) => {
+    if (e.target.id !== "slookup") return;
+    state.season.lookup = e.target.value;
+    document.getElementById("slookup-res").innerHTML = lookupTable();
   });
   seasonEl.addEventListener("change", (e) => {
     if (e.target.id !== "sweeks") return;

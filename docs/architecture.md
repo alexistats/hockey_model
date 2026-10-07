@@ -534,8 +534,7 @@ they average from one game to the next, so a hot week almost never qualifies
 and forty games at the same pace usually does - which is the behaviour a flag
 has to have to be worth reading.
 
-None of this moves a projection. Whether the season so far should is the
-model's question, answered by refitting it with these games as data.
+The flag moves nothing. What moves a rate is the in-season update, below.
 
 ## Players outside the model sit at replacement level, marked
 
@@ -669,3 +668,14 @@ a role, and a month of it is evidence. Their points a start stay at the preseaso
 rate unless `rate_update` is asked for. There is no goalie posterior fitted through a
 held-out season to check that update on, and on the stand-in run it moved Wolf from
 7.7 to 6.0 points a start on twenty starts - too far to ship unchecked.
+
+The Season tab's **Buy low** list reads the update for trade targets: skaters on other
+teams whose updated rate has held or risen since the preseason (within 0.05) while
+their points a game trail it by half a point or more, after two games or more,
+sorted by the gap (`buyLow` in the page, tested in `tests/test_buy_low.py`). The
+points come from goals and assists, which run hot and cold; the category update
+leans on shots, hits and blocks, so a rate that holds while the points lag is the
+model expecting them. The reverse is the hot start it does not buy - Tolvanen in
+October 2026: 6.25 a game on three goals from six shots, his rate down from 4.55 to
+4.47. Before about ten games the update swings mostly on hits and shots, and the
+held-out check starts at ten, so an early list is names to ask about.
